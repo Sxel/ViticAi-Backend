@@ -1,0 +1,104 @@
+spring:
+  application:
+    name: vitialert-backend
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/vitialert}
+    username: ${DB_USERNAME:vitialert}
+    password: ${DB_PASSWORD:vitialert}
+    hikari:
+      pool-name: vitialert-pool
+      maximum-pool-size: 10
+
+  jpa:
+    # Flyway es la unica fuente de verdad del esquema. Hibernate no genera ni modifica DDL.
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+          batch_size: 25
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+  servlet:
+    multipart:
+      max-file-size: 25MB
+      max-request-size: 25MB
+
+  jackson:
+    # Los nulls se serializan de forma explicita: un dato faltante debe verse como faltante.
+    default-property-inclusion: always
+
+server:
+  port: ${SERVER_PORT:8080}
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+  api-docs:
+    path: /v3/api-docs
+
+vitialert:
+  node:
+    # Alta automatica de nodos desconocidos: permite apuntar la maqueta actual sin configurar nada.
+    auto-register: true
+    offline-after-minutes: ${NODE_OFFLINE_AFTER_MINUTES:10}
+
+  quality:
+    flow-noise-threshold-l-min: 0.2
+    frozen-sensor-enabled: true
+    frozen-sensor-minutes: 60
+    plausible-temp-min-c: -20.0
+    plausible-temp-max-c: 55.0
+    plausible-wind-max-kmh: 120.0
+    adc-min: 0
+    adc-max: 4095
+
+  features:
+    max-lag-tolerance-minutes: 30
+
+  aggregation:
+    max-gap-seconds: 120
+    max-range-days: 31
+
+  # --- Integraciones externas (todas opcionales y desactivadas por defecto) ---
+  satellite:
+    enabled: ${SATELLITE_ENABLED:false}
+    base-url: ${SATELLITE_BASE_URL:http://localhost:8000}
+    latest-path: /api/satellite/latest
+    connect-timeout-ms: 2000
+    read-timeout-ms: 3000
+
+  weather:
+    enabled: ${WEATHER_PULL_ENABLED:false}
+    base-url: ${WEATHER_BASE_URL:http://localhost:8001}
+    daily-path: /api/weather/daily
+    connect-timeout-ms: 2000
+    read-timeout-ms: 5000
+    default-source: OPEN_METEO_ERA5
+    preferred-source: OPEN_METEO_ERA5
+
+  ml:
+    enabled: ${ML_ENABLED:false}
+    base-url: ${ML_BASE_URL:http://localhost:8002}
+    predict-path: /predict
+    connect-timeout-ms: 1000
+    read-timeout-ms: 1500
+
+  security:
+    node-key-enabled: ${NODE_KEY_ENABLED:false}
+    admin-key-enabled: ${ADMIN_KEY_ENABLED:false}
+    admin-key: ${ADMIN_KEY:}
+
+logging:
+  level:
+    root: INFO
+    com.vitialert.backend: INFO
+    org.hibernate.SQL: WARN
