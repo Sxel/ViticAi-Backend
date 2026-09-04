@@ -5,11 +5,15 @@ import com.vitialert.backend.domain.DecisionRecord;
 import com.vitialert.backend.domain.DecisionSource;
 import com.vitialert.backend.domain.Node;
 import com.vitialert.backend.domain.TelemetryReading;
+import com.vitialert.backend.dto.DecisionRecordDto;
 import com.vitialert.backend.dto.FeatureVector;
+import com.vitialert.backend.dto.PageResponse;
 import com.vitialert.backend.dto.PredictionResponse;
+import com.vitialert.backend.mapper.DecisionRecordMapper;
 import com.vitialert.backend.repository.DecisionRecordRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -39,13 +43,16 @@ public class IrrigationDecisionService {
     private final PredictionService predictionService;
     private final FeatureService featureService;
     private final DecisionRecordRepository decisionRecordRepository;
+    private final DecisionRecordMapper decisionRecordMapper;
 
     public IrrigationDecisionService(PredictionService predictionService,
                                      FeatureService featureService,
-                                     DecisionRecordRepository decisionRecordRepository) {
+                                     DecisionRecordRepository decisionRecordRepository,
+                                     DecisionRecordMapper decisionRecordMapper) {
         this.predictionService = predictionService;
         this.featureService = featureService;
         this.decisionRecordRepository = decisionRecordRepository;
+        this.decisionRecordMapper = decisionRecordMapper;
     }
 
     /**
@@ -98,6 +105,13 @@ public class IrrigationDecisionService {
 
         return new DecisionOutcome(reading.getDecisionRiegoLocal(), backendDecision, finalDecision,
                 accion, source, motivo, modelVersion);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<DecisionRecordDto> findByNode(Long nodeId, Pageable pageable) {
+        return PageResponse.of(
+                decisionRecordRepository.findByNode(nodeId, pageable),
+                decisionRecordMapper::toDto);
     }
 
     private static DecisionAction resolveAction(boolean finalDecision, boolean valveCurrentlyOpen) {

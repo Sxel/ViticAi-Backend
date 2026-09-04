@@ -13,11 +13,13 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -83,6 +85,59 @@ class TelemetryIngestionIT {
         assertThat(reading.getValvulaAbiertaActual()).isTrue();
         assertThat(reading.getDecisionRiegoLocal()).isTrue();
         assertThat(reading.getTimestampReceived()).isNotNull();
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void devuelveLaUltimaTelemetriaConOpenInViewDesactivado() throws Exception {
+        mockMvc.perform(post("/api/data")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(PAYLOAD_ESP32.formatted("latest-1", "false")))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/nodes/latest-1/telemetry/latest"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.node_id").value("latest-1"))
+                .andExpect(jsonPath("$.temperatura_ambiente_c").value(28.4))
+                .andExpect(jsonPath("$.humedad_suelo_pct").value(22.0));
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void devuelveHistoricosPaginadosConOpenInViewDesactivado() throws Exception {
+        mockMvc.perform(post("/api/data")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(PAYLOAD_ESP32.formatted("history-1", "true")))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/nodes/history-1/telemetry")
+                        .param("page", "0")
+                        .param("size", "10"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].node_id").value("history-1"))
+                .andExpect(jsonPath("$.content[0].humedad_suelo_pct").value(22.0))
+                .andExpect(jsonPath("$.total_elements").value(1));
+
+        mockMvc.perform(get("/api/nodes/history-1/irrigation-events")
+                        .param("page", "0")
+                        .param("size", "10"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].node_id").value("history-1"))
+                .andExpect(jsonPath("$.content[0].estado").value("OPEN"))
+                .andExpect(jsonPath("$.total_elements").value(1));
+
+        mockMvc.perform(get("/api/nodes/history-1/irrigation-events/current"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.node_id").value("history-1"))
+                .andExpect(jsonPath("$.estado").value("OPEN"));
+
+        mockMvc.perform(get("/api/nodes/history-1/decisions")
+                        .param("page", "0")
+                        .param("size", "10"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].node_id").value("history-1"))
+                .andExpect(jsonPath("$.content[0].decision_final").value(true))
+                .andExpect(jsonPath("$.total_elements").value(1));
     }
 
     @Test

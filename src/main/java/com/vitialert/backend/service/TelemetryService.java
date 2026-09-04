@@ -4,6 +4,8 @@ import com.vitialert.backend.domain.IrrigationEvent;
 import com.vitialert.backend.domain.Node;
 import com.vitialert.backend.domain.TelemetryReading;
 import com.vitialert.backend.dto.NodeStatusDto;
+import com.vitialert.backend.dto.PageResponse;
+import com.vitialert.backend.dto.TelemetryReadingDto;
 import com.vitialert.backend.dto.TelemetryRequest;
 import com.vitialert.backend.dto.TelemetryResponse;
 import com.vitialert.backend.mapper.IrrigationEventMapper;
@@ -96,17 +98,21 @@ public class TelemetryService {
     }
 
     @Transactional(readOnly = true)
-    public Optional<TelemetryReading> findLatest(Long nodeId) {
+    public Optional<TelemetryReadingDto> findLatest(Long nodeId) {
         List<TelemetryReading> latest = telemetryReadingRepository.findLatest(nodeId, PageRequest.of(0, 1));
-        return latest.isEmpty() ? Optional.empty() : Optional.of(latest.get(0));
+        return latest.stream().findFirst().map(telemetryMapper::toDto);
     }
 
     @Transactional(readOnly = true)
-    public Page<TelemetryReading> findRange(Long nodeId, Instant from, Instant to, Pageable pageable) {
+    public PageResponse<TelemetryReadingDto> findRange(Long nodeId,
+                                                       Instant from,
+                                                       Instant to,
+                                                       Pageable pageable) {
         if (!from.isBefore(to)) {
             throw new IllegalArgumentException("El parametro from debe ser anterior a to.");
         }
-        return telemetryReadingRepository.findRange(nodeId, from, to, pageable);
+        Page<TelemetryReading> readings = telemetryReadingRepository.findRange(nodeId, from, to, pageable);
+        return PageResponse.of(readings, telemetryMapper::toDto);
     }
 
     /**
@@ -115,11 +121,11 @@ public class TelemetryService {
      */
     @Transactional(readOnly = true)
     public NodeStatusDto buildStatus(Node node) {
-        Optional<TelemetryReading> latest = findLatest(node.getId());
+        Optional<TelemetryReadingDto> latest = findLatest(node.getId());
         Optional<IrrigationEvent> current = irrigationEventService.findCurrent(node.getId());
 
         long offlineAfterMinutes = nodeService.offlineAfterMinutes();
-        Instant lastSeen = latest.map(TelemetryReading::getTimestampReceived).orElse(null);
+        Instant lastSeen = latest.map(TelemetryReadingDto::timestampReceived).orElse(null);
         boolean online = lastSeen != null
                 && Duration.between(lastSeen, Instant.now()).toMinutes() < offlineAfterMinutes;
 
@@ -128,7 +134,7 @@ public class TelemetryService {
                 lastSeen,
                 online,
                 offlineAfterMinutes,
-                latest.map(telemetryMapper::toDto).orElse(null),
+                latest.orElse(null),
                 current.map(irrigationEventMapper::toDto).orElse(null));
     }
 }

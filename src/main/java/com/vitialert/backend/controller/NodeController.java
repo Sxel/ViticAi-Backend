@@ -11,13 +11,10 @@ import com.vitialert.backend.dto.NodeStatusDto;
 import com.vitialert.backend.dto.PageResponse;
 import com.vitialert.backend.dto.TelemetryReadingDto;
 import com.vitialert.backend.exception.ResourceNotFoundException;
-import com.vitialert.backend.mapper.DecisionRecordMapper;
-import com.vitialert.backend.mapper.IrrigationEventMapper;
 import com.vitialert.backend.mapper.NodeMapper;
-import com.vitialert.backend.mapper.TelemetryMapper;
-import com.vitialert.backend.repository.DecisionRecordRepository;
 import com.vitialert.backend.service.AggregationService;
 import com.vitialert.backend.service.FeatureService;
+import com.vitialert.backend.service.IrrigationDecisionService;
 import com.vitialert.backend.service.IrrigationEventService;
 import com.vitialert.backend.service.NodeService;
 import com.vitialert.backend.service.TelemetryService;
@@ -47,32 +44,23 @@ public class NodeController {
     private final IrrigationEventService irrigationEventService;
     private final FeatureService featureService;
     private final AggregationService aggregationService;
-    private final DecisionRecordRepository decisionRecordRepository;
+    private final IrrigationDecisionService irrigationDecisionService;
     private final NodeMapper nodeMapper;
-    private final TelemetryMapper telemetryMapper;
-    private final IrrigationEventMapper irrigationEventMapper;
-    private final DecisionRecordMapper decisionRecordMapper;
 
     public NodeController(NodeService nodeService,
                           TelemetryService telemetryService,
                           IrrigationEventService irrigationEventService,
                           FeatureService featureService,
                           AggregationService aggregationService,
-                          DecisionRecordRepository decisionRecordRepository,
-                          NodeMapper nodeMapper,
-                          TelemetryMapper telemetryMapper,
-                          IrrigationEventMapper irrigationEventMapper,
-                          DecisionRecordMapper decisionRecordMapper) {
+                          IrrigationDecisionService irrigationDecisionService,
+                          NodeMapper nodeMapper) {
         this.nodeService = nodeService;
         this.telemetryService = telemetryService;
         this.irrigationEventService = irrigationEventService;
         this.featureService = featureService;
         this.aggregationService = aggregationService;
-        this.decisionRecordRepository = decisionRecordRepository;
+        this.irrigationDecisionService = irrigationDecisionService;
         this.nodeMapper = nodeMapper;
-        this.telemetryMapper = telemetryMapper;
-        this.irrigationEventMapper = irrigationEventMapper;
-        this.decisionRecordMapper = decisionRecordMapper;
     }
 
     @Operation(summary = "Lista todos los nodos registrados")
@@ -92,7 +80,6 @@ public class NodeController {
     public TelemetryReadingDto latestTelemetry(@PathVariable String nodeId) {
         Node node = nodeService.requireByExternalId(nodeId);
         return telemetryService.findLatest(node.getId())
-                .map(telemetryMapper::toDto)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "El nodo " + nodeId + " todavia no tiene lecturas."));
     }
@@ -110,9 +97,8 @@ public class NodeController {
         Instant toInstant = RequestTimes.parseOrDefault(to, "to", Instant.now());
         Instant fromInstant = RequestTimes.parseOrDefault(from, "from", RequestTimes.defaultFrom(toInstant));
 
-        return PageResponse.of(
-                telemetryService.findRange(node.getId(), fromInstant, toInstant, pageable(page, size)),
-                telemetryMapper::toDto);
+        return telemetryService.findRange(
+                node.getId(), fromInstant, toInstant, pageable(page, size));
     }
 
     @Operation(summary = "Eventos de riego del nodo")
@@ -126,17 +112,15 @@ public class NodeController {
         Instant toInstant = RequestTimes.parseOrDefault(to, "to", Instant.now());
         Instant fromInstant = RequestTimes.parseOrDefault(from, "from", RequestTimes.defaultFrom(toInstant));
 
-        return PageResponse.of(
-                irrigationEventService.findRange(node.getId(), fromInstant, toInstant, pageable(page, size)),
-                irrigationEventMapper::toDto);
+        return irrigationEventService.findRangeDto(
+                node.getId(), fromInstant, toInstant, pageable(page, size));
     }
 
     @Operation(summary = "Riego actualmente en curso, si existe")
     @GetMapping("/{nodeId}/irrigation-events/current")
     public IrrigationEventDto currentIrrigation(@PathVariable String nodeId) {
         Node node = nodeService.requireByExternalId(nodeId);
-        return irrigationEventService.findCurrent(node.getId())
-                .map(irrigationEventMapper::toDto)
+        return irrigationEventService.findCurrentDto(node.getId())
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "El nodo " + nodeId + " no tiene un riego en curso."));
     }
@@ -155,9 +139,7 @@ public class NodeController {
                                                      @RequestParam(defaultValue = "0") int page,
                                                      @RequestParam(defaultValue = "50") int size) {
         Node node = nodeService.requireByExternalId(nodeId);
-        return PageResponse.of(
-                decisionRecordRepository.findByNode(node.getId(), pageable(page, size)),
-                decisionRecordMapper::toDto);
+        return irrigationDecisionService.findByNode(node.getId(), pageable(page, size));
     }
 
     @Operation(summary = "Features temporales IoT calculadas por timestamp real",

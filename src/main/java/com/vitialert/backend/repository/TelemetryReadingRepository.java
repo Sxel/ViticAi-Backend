@@ -3,6 +3,7 @@ package com.vitialert.backend.repository;
 import com.vitialert.backend.domain.TelemetryReading;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -16,6 +17,7 @@ import java.util.List;
  */
 public interface TelemetryReadingRepository extends JpaRepository<TelemetryReading, Long> {
 
+    @EntityGraph(attributePaths = "node")
     @Query("""
             select t from TelemetryReading t
             where t.node.id = :nodeId
@@ -36,6 +38,7 @@ public interface TelemetryReadingRepository extends JpaRepository<TelemetryReadi
                       and t.timestampReceived >= :from
                       and t.timestampReceived <= :to
                     """)
+    @EntityGraph(attributePaths = "node")
     Page<TelemetryReading> findRange(@Param("nodeId") Long nodeId,
                                      @Param("from") Instant from,
                                      @Param("to") Instant to,

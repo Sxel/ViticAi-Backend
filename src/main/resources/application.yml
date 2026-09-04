@@ -4,8 +4,8 @@ spring:
 
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/vitialert}
-    username: ${DB_USERNAME:vitialert}
-    password: ${DB_PASSWORD:vitialert}
+    username: postgres
+    password: siim
     hikari:
       pool-name: vitialert-pool
       maximum-pool-size: 10

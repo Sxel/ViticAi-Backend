@@ -4,6 +4,9 @@ import com.vitialert.backend.domain.IrrigationEvent;
 import com.vitialert.backend.domain.IrrigationEventStatus;
 import com.vitialert.backend.domain.Node;
 import com.vitialert.backend.domain.TelemetryReading;
+import com.vitialert.backend.dto.IrrigationEventDto;
+import com.vitialert.backend.dto.PageResponse;
+import com.vitialert.backend.mapper.IrrigationEventMapper;
 import com.vitialert.backend.repository.IrrigationEventRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,9 +34,12 @@ public class IrrigationEventService {
     private static final Logger log = LoggerFactory.getLogger(IrrigationEventService.class);
 
     private final IrrigationEventRepository irrigationEventRepository;
+    private final IrrigationEventMapper irrigationEventMapper;
 
-    public IrrigationEventService(IrrigationEventRepository irrigationEventRepository) {
+    public IrrigationEventService(IrrigationEventRepository irrigationEventRepository,
+                                  IrrigationEventMapper irrigationEventMapper) {
         this.irrigationEventRepository = irrigationEventRepository;
+        this.irrigationEventMapper = irrigationEventMapper;
     }
 
     /**
@@ -90,6 +96,20 @@ public class IrrigationEventService {
     @Transactional(readOnly = true)
     public Page<IrrigationEvent> findRange(Long nodeId, Instant from, Instant to, Pageable pageable) {
         return irrigationEventRepository.findRange(nodeId, from, to, pageable);
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<IrrigationEventDto> findCurrentDto(Long nodeId) {
+        return findCurrent(nodeId).map(irrigationEventMapper::toDto);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<IrrigationEventDto> findRangeDto(Long nodeId,
+                                                         Instant from,
+                                                         Instant to,
+                                                         Pageable pageable) {
+        Page<IrrigationEvent> events = irrigationEventRepository.findRange(nodeId, from, to, pageable);
+        return PageResponse.of(events, irrigationEventMapper::toDto);
     }
 
     /**
