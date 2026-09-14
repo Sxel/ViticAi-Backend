@@ -10,7 +10,5 @@ public interface NodeRepository extends JpaRepository<Node, Long> {
 
     Optional<Node> findByExternalId(String externalId);
 
-    Optional<Node> findByApiKey(String apiKey);
-
     List<Node> findAllByOrderByExternalIdAsc();
 }

@@ -8,12 +8,12 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 
 public interface IrrigationEventRepository extends JpaRepository<IrrigationEvent, Long> {
 
+    /** Eventos del nodo en un estado dado. Usar con {@code PageRequest.of(0, 1)} para el abierto. */
     @Query("""
             select e from IrrigationEvent e
             where e.node.id = :nodeId and e.estado = :estado
@@ -40,20 +40,4 @@ public interface IrrigationEventRepository extends JpaRepository<IrrigationEvent
                                     @Param("from") Instant from,
                                     @Param("to") Instant to,
                                     Pageable pageable);
-
-    /**
-     * Volumen aplicado por los riegos CERRADOS dentro de (from, to].
-     * Devuelve null si no hubo ningun evento cerrado en la ventana.
-     */
-    @Query("""
-            select sum(e.volumenAplicadoL) from IrrigationEvent e
-            where e.node.id = :nodeId
-              and e.endedAt is not null
-              and e.volumenAplicadoL is not null
-              and e.endedAt > :from
-              and e.endedAt <= :to
-            """)
-    BigDecimal sumAppliedVolume(@Param("nodeId") Long nodeId,
-                                @Param("from") Instant from,
-                                @Param("to") Instant to);
 }

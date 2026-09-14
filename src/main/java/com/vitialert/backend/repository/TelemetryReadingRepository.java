@@ -11,11 +11,12 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * Todas las consultas son explicitas y acotadas por nodo y ventana temporal: la ingesta
- * de un POST nunca debe leer la tabla completa ni recalcular el historico.
+ * Tres consultas, todas acotadas por nodo y ventana temporal y todas resueltas por el indice
+ * {@code (node_id, timestamp_received)}. La ingesta de un POST nunca lee el historico.
  */
 public interface TelemetryReadingRepository extends JpaRepository<TelemetryReading, Long> {
 
+    /** Ultimas lecturas del nodo. Usar con {@code PageRequest.of(0, 1)} para la mas reciente. */
     @Query("""
             select t from TelemetryReading t
             where t.node.id = :nodeId
@@ -23,6 +24,7 @@ public interface TelemetryReadingRepository extends JpaRepository<TelemetryReadi
             """)
     List<TelemetryReading> findLatest(@Param("nodeId") Long nodeId, Pageable pageable);
 
+    /** Historico paginado, del mas reciente al mas antiguo. */
     @Query(value = """
             select t from TelemetryReading t
             where t.node.id = :nodeId
@@ -41,7 +43,10 @@ public interface TelemetryReadingRepository extends JpaRepository<TelemetryReadi
                                      @Param("to") Instant to,
                                      Pageable pageable);
 
-    /** Serie completa ascendente para la capa de agregacion temporal. */
+    /**
+     * Serie ascendente para construir los buckets horarios. {@code to} es exclusivo para que
+     * dos rangos contiguos no compartan lecturas.
+     */
     @Query("""
             select t from TelemetryReading t
             where t.node.id = :nodeId
@@ -52,74 +57,4 @@ public interface TelemetryReadingRepository extends JpaRepository<TelemetryReadi
     List<TelemetryReading> findRangeAsc(@Param("nodeId") Long nodeId,
                                         @Param("from") Instant from,
                                         @Param("to") Instant to);
-
-    /** Observacion con humedad de suelo mas cercana ANTES (o en) el instante buscado. */
-    @Query("""
-            select t from TelemetryReading t
-            where t.node.id = :nodeId
-              and t.humedadSueloPct is not null
-              and t.timestampReceived <= :target
-              and t.timestampReceived >= :lowerBound
-            order by t.timestampReceived desc
-            """)
-    List<TelemetryReading> findSoilNearestBefore(@Param("nodeId") Long nodeId,
-                                                 @Param("target") Instant target,
-                                                 @Param("lowerBound") Instant lowerBound,
-                                                 Pageable pageable);
-
-    /** Observacion con humedad de suelo mas cercana DESPUES del instante buscado. */
-    @Query("""
-            select t from TelemetryReading t
-            where t.node.id = :nodeId
-              and t.humedadSueloPct is not null
-              and t.timestampReceived > :target
-              and t.timestampReceived <= :upperBound
-            order by t.timestampReceived asc
-            """)
-    List<TelemetryReading> findSoilNearestAfter(@Param("nodeId") Long nodeId,
-                                                @Param("target") Instant target,
-                                                @Param("upperBound") Instant upperBound,
-                                                Pageable pageable);
-
-    /** Media de humedad de suelo en (from, to]. Devuelve null si no hay observaciones. */
-    @Query("""
-            select avg(t.humedadSueloPct) from TelemetryReading t
-            where t.node.id = :nodeId
-              and t.humedadSueloPct is not null
-              and t.timestampReceived > :from
-              and t.timestampReceived <= :to
-            """)
-    Double averageSoilMoisture(@Param("nodeId") Long nodeId,
-                               @Param("from") Instant from,
-                               @Param("to") Instant to);
-
-    @Query("""
-            select count(t) from TelemetryReading t
-            where t.node.id = :nodeId
-              and t.timestampReceived > :from
-              and t.timestampReceived <= :to
-            """)
-    long countInRange(@Param("nodeId") Long nodeId,
-                      @Param("from") Instant from,
-                      @Param("to") Instant to);
-
-    /** Ultima lectura cuyo valor RAW difiere del actual: base de la deteccion de sensor congelado. */
-    @Query("""
-            select t from TelemetryReading t
-            where t.node.id = :nodeId
-              and t.humedadSueloRaw is not null
-              and t.humedadSueloRaw <> :raw
-            order by t.timestampReceived desc
-            """)
-    List<TelemetryReading> findLastWithDifferentRaw(@Param("nodeId") Long nodeId,
-                                                    @Param("raw") Integer raw,
-                                                    Pageable pageable);
-
-    /** Lecturas mas antiguas del nodo (usar con PageRequest.of(0, 1) para obtener la primera). */
-    @Query("""
-            select t from TelemetryReading t
-            where t.node.id = :nodeId
-            order by t.timestampReceived asc
-            """)
-    List<TelemetryReading> findOldest(@Param("nodeId") Long nodeId, Pageable pageable);
 }

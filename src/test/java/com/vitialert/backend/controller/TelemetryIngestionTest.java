@@ -2,7 +2,6 @@ package com.vitialert.backend.controller;
 
 import com.vitialert.backend.domain.QualityFlag;
 import com.vitialert.backend.domain.TelemetryReading;
-import com.vitialert.backend.repository.DecisionRecordRepository;
 import com.vitialert.backend.repository.NodeRepository;
 import com.vitialert.backend.repository.TelemetryReadingRepository;
 import org.junit.jupiter.api.Test;
@@ -23,14 +22,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Criterios de exito 1 a 6: el contrato del ESP32 no cambia, el JSON actual se acepta tal cual,
- * la lectura queda persistida y la valvula sigue gobernada por decision_riego_local.
+ * El contrato del ESP32 no cambia: mismo JSON de entrada, misma respuesta, la lectura queda
+ * persistida y la valvula sigue gobernada por decision_riego_local.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 @Transactional
-class TelemetryIngestionIT {
+class TelemetryIngestionTest {
 
     private static final String PAYLOAD_ESP32 = """
             {
@@ -56,9 +55,6 @@ class TelemetryIngestionIT {
     @Autowired
     private NodeRepository nodeRepository;
 
-    @Autowired
-    private DecisionRecordRepository decisionRecordRepository;
-
     @Test
     void aceptaElPayloadRealDelEsp32YPersisteLaLectura() throws Exception {
         mockMvc.perform(post("/api/data")
@@ -83,65 +79,37 @@ class TelemetryIngestionIT {
         assertThat(reading.getValvulaAbiertaActual()).isTrue();
         assertThat(reading.getDecisionRiegoLocal()).isTrue();
         assertThat(reading.getTimestampReceived()).isNotNull();
+        assertThat(reading.getQualityFlag()).isEqualTo(QualityFlag.VALID);
     }
 
     @Test
-    void laDecisionFinalReplicaLaDecisionLocalCuandoNoHayModelo() throws Exception {
+    void laValvulaSigueGobernadaPorLaDecisionLocalDelEsp32() throws Exception {
         mockMvc.perform(post("/api/data")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(PAYLOAD_ESP32.formatted("ingest-2", "false")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.abrir_valvula").value(false))
                 .andExpect(jsonPath("$.encender_luz").value(false));
-
-        var node = nodeRepository.findByExternalId("ingest-2").orElseThrow();
-        var decisions = decisionRecordRepository.findByNode(node.getId(), PageRequest.of(0, 5));
-
-        assertThat(decisions.getContent()).hasSize(1);
-        var decision = decisions.getContent().get(0);
-        assertThat(decision.getDecisionLocal()).isFalse();
-        assertThat(decision.getDecisionBackend()).isNull();
-        assertThat(decision.isDecisionFinal()).isFalse();
-        assertThat(decision.getSource().name()).isEqualTo("LOCAL_FALLBACK");
-        assertThat(decision.getAccion().name()).isEqualTo("CERRAR");
     }
 
     @Test
-    void rechazaTemperaturaFueraDelRangoFisico() throws Exception {
+    void rechazaValoresFisicamenteImposibles() throws Exception {
         mockMvc.perform(post("/api/data")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"nodo_id":"ingest-3","temperatura_ambiente_c":120.0}
+                                {"nodo_id":"ingest-3","temperatura_ambiente_c":120.0,
+                                 "humedad_relativa_pct":150,"caudal_l_min":-3.0,
+                                 "velocidad_viento_kmh":900}
                                 """))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"))
                 .andExpect(jsonPath("$.path").value("/api/data"))
-                .andExpect(jsonPath("$.details.temperaturaAmbienteC").exists());
-
-        assertThat(nodeRepository.findByExternalId("ingest-3")).isEmpty();
-    }
-
-    @Test
-    void rechazaHumedadRelativaMayorA100() throws Exception {
-        mockMvc.perform(post("/api/data")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"nodo_id":"ingest-4","humedad_relativa_pct":150}
-                                """))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
-    }
-
-    @Test
-    void rechazaCaudalNegativoYVientoImposible() throws Exception {
-        mockMvc.perform(post("/api/data")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"nodo_id":"ingest-5","caudal_l_min":-3.0,"velocidad_viento_kmh":900}
-                                """))
-                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.details.temperaturaAmbienteC").exists())
+                .andExpect(jsonPath("$.details.humedadRelativaPct").exists())
                 .andExpect(jsonPath("$.details.caudalLMin").exists())
                 .andExpect(jsonPath("$.details.velocidadVientoKmh").exists());
+
+        assertThat(nodeRepository.findByExternalId("ingest-3")).isEmpty();
     }
 
     @Test
@@ -160,17 +128,18 @@ class TelemetryIngestionIT {
         mockMvc.perform(post("/api/data")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"nodo_id":"ingest-6","humedad_suelo_pct":30}
+                                {"nodo_id":"ingest-4","humedad_suelo_pct":30}
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.abrir_valvula").value(false));
 
-        var node = nodeRepository.findByExternalId("ingest-6").orElseThrow();
+        var node = nodeRepository.findByExternalId("ingest-4").orElseThrow();
         TelemetryReading reading = telemetryReadingRepository
                 .findLatest(node.getId(), PageRequest.of(0, 1)).get(0);
 
         assertThat(reading.getQualityFlag()).isEqualTo(QualityFlag.MISSING);
         assertThat(reading.getQualityNotes()).contains("MISSING:temperatura_ambiente_c");
+        // El dato que si vino se conserva: un sensor roto no tira abajo el resto del registro.
         assertThat(reading.getHumedadSueloPct()).isEqualTo(30.0);
     }
 
@@ -179,14 +148,14 @@ class TelemetryIngestionIT {
         mockMvc.perform(post("/api/data")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"nodo_id":"ingest-7","temperatura_ambiente_c":22.0,"humedad_relativa_pct":50,
+                                {"nodo_id":"ingest-5","temperatura_ambiente_c":22.0,"humedad_relativa_pct":50,
                                  "humedad_suelo_pct":30,"humedad_suelo_raw":2500,"velocidad_viento_kmh":5,
                                  "caudal_l_min":4.5,"volumen_total_l":10.0,
                                  "valvula_abierta_actual":false,"decision_riego_local":false}
                                 """))
                 .andExpect(status().isOk());
 
-        var node = nodeRepository.findByExternalId("ingest-7").orElseThrow();
+        var node = nodeRepository.findByExternalId("ingest-5").orElseThrow();
         TelemetryReading reading = telemetryReadingRepository
                 .findLatest(node.getId(), PageRequest.of(0, 1)).get(0);
 

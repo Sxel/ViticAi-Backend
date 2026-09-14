@@ -1,12 +1,13 @@
 package com.vitialert.backend;
 
 import com.vitialert.backend.domain.Node;
+import com.vitialert.backend.domain.QualityFlag;
 import com.vitialert.backend.domain.TelemetryReading;
 
 import java.math.BigDecimal;
 import java.time.Instant;
 
-/** Utilidades compartidas por los tests para construir lecturas con timestamps controlados. */
+/** Construccion de lecturas con timestamps controlados. */
 public final class TestSupport {
 
     private TestSupport() {
@@ -29,7 +30,7 @@ public final class TestSupport {
                 .volumenTotalL(volume)
                 .valvulaAbiertaActual(valveOpen)
                 .decisionRiegoLocal(valveOpen)
-                .quality(com.vitialert.backend.domain.QualityFlag.VALID, null)
+                .quality(QualityFlag.VALID, null)
                 .build();
     }
 

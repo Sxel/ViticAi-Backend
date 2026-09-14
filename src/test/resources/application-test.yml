@@ -1,5 +1,5 @@
-# Perfil de test: base H2 en memoria en modo PostgreSQL.
-# Flyway se desactiva porque la migracion usa indices parciales de PostgreSQL;
+# Perfil de test: H2 en memoria en modo PostgreSQL.
+# Flyway se desactiva porque las migraciones usan indices parciales de PostgreSQL;
 # el esquema de test lo genera Hibernate a partir de las mismas entidades.
 spring:
   datasource:
@@ -23,19 +23,10 @@ spring:
 vitialert:
   node:
     auto-register: true
-    offline-after-minutes: 10
-  quality:
-    frozen-sensor-enabled: true
-    frozen-sensor-minutes: 60
   satellite:
-    enabled: false
-  weather:
     enabled: false
   ml:
     enabled: false
-  security:
-    node-key-enabled: false
-    admin-key-enabled: false
 
 logging:
   level:

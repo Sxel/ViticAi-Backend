@@ -1,30 +1,23 @@
 package com.vitialert.backend.controller;
 
-import com.vitialert.backend.domain.Granularity;
+import com.vitialert.backend.client.SatelliteClient;
 import com.vitialert.backend.domain.Node;
-import com.vitialert.backend.dto.AggregatedTelemetryDto;
-import com.vitialert.backend.dto.DecisionRecordDto;
 import com.vitialert.backend.dto.FeatureVector;
 import com.vitialert.backend.dto.IrrigationEventDto;
 import com.vitialert.backend.dto.NodeDto;
-import com.vitialert.backend.dto.NodeStatusDto;
 import com.vitialert.backend.dto.PageResponse;
 import com.vitialert.backend.dto.TelemetryReadingDto;
+import com.vitialert.backend.exception.ApiErrorResponse;
 import com.vitialert.backend.exception.ResourceNotFoundException;
-import com.vitialert.backend.mapper.DecisionRecordMapper;
-import com.vitialert.backend.mapper.IrrigationEventMapper;
-import com.vitialert.backend.mapper.NodeMapper;
-import com.vitialert.backend.mapper.TelemetryMapper;
-import com.vitialert.backend.repository.DecisionRecordRepository;
-import com.vitialert.backend.service.AggregationService;
-import com.vitialert.backend.service.FeatureService;
-import com.vitialert.backend.service.IrrigationEventService;
-import com.vitialert.backend.service.NodeService;
+import com.vitialert.backend.service.DatasetService;
+import com.vitialert.backend.service.IrrigationService;
 import com.vitialert.backend.service.TelemetryService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -34,154 +27,116 @@ import org.springframework.web.bind.annotation.RestController;
 import java.time.Instant;
 import java.util.List;
 
-/** Consultas de nodos, telemetria, riegos, decisiones y features. */
+/**
+ * Consultas sobre nodos: telemetria, riegos, features y contexto satelital.
+ *
+ * <p>Los parametros {@code from} y {@code to} admiten ISO-8601 ({@code 2026-09-03T10:00:00Z})
+ * o fecha suelta ({@code 2026-09-03}, comienzo del dia en UTC). Por defecto, ultimas 24 h.</p>
+ */
 @RestController
 @RequestMapping("/api/nodes")
-@Tag(name = "Nodos", description = "Consulta del estado y del historico de cada nodo")
+@Tag(name = "Nodos", description = "Consulta de telemetria, riegos y features por nodo")
 public class NodeController {
 
     private static final int MAX_PAGE_SIZE = 500;
 
-    private final NodeService nodeService;
     private final TelemetryService telemetryService;
-    private final IrrigationEventService irrigationEventService;
-    private final FeatureService featureService;
-    private final AggregationService aggregationService;
-    private final DecisionRecordRepository decisionRecordRepository;
-    private final NodeMapper nodeMapper;
-    private final TelemetryMapper telemetryMapper;
-    private final IrrigationEventMapper irrigationEventMapper;
-    private final DecisionRecordMapper decisionRecordMapper;
+    private final IrrigationService irrigationService;
+    private final DatasetService datasetService;
+    private final SatelliteClient satelliteClient;
 
-    public NodeController(NodeService nodeService,
-                          TelemetryService telemetryService,
-                          IrrigationEventService irrigationEventService,
-                          FeatureService featureService,
-                          AggregationService aggregationService,
-                          DecisionRecordRepository decisionRecordRepository,
-                          NodeMapper nodeMapper,
-                          TelemetryMapper telemetryMapper,
-                          IrrigationEventMapper irrigationEventMapper,
-                          DecisionRecordMapper decisionRecordMapper) {
-        this.nodeService = nodeService;
+    public NodeController(TelemetryService telemetryService,
+                          IrrigationService irrigationService,
+                          DatasetService datasetService,
+                          SatelliteClient satelliteClient) {
         this.telemetryService = telemetryService;
-        this.irrigationEventService = irrigationEventService;
-        this.featureService = featureService;
-        this.aggregationService = aggregationService;
-        this.decisionRecordRepository = decisionRecordRepository;
-        this.nodeMapper = nodeMapper;
-        this.telemetryMapper = telemetryMapper;
-        this.irrigationEventMapper = irrigationEventMapper;
-        this.decisionRecordMapper = decisionRecordMapper;
+        this.irrigationService = irrigationService;
+        this.datasetService = datasetService;
+        this.satelliteClient = satelliteClient;
     }
 
-    @Operation(summary = "Lista todos los nodos registrados")
+    @Operation(summary = "Lista los nodos registrados")
     @GetMapping
     public List<NodeDto> findAll() {
-        return nodeService.findAll().stream().map(nodeMapper::toDto).toList();
-    }
-
-    @Operation(summary = "Detalle de un nodo")
-    @GetMapping("/{nodeId}")
-    public NodeDto findOne(@PathVariable String nodeId) {
-        return nodeMapper.toDto(nodeService.requireByExternalId(nodeId));
+        return telemetryService.findAllNodes().stream().map(NodeDto::from).toList();
     }
 
     @Operation(summary = "Ultima lectura recibida del nodo")
     @GetMapping("/{nodeId}/telemetry/latest")
     public TelemetryReadingDto latestTelemetry(@PathVariable String nodeId) {
-        Node node = nodeService.requireByExternalId(nodeId);
+        Node node = telemetryService.requireNode(nodeId);
         return telemetryService.findLatest(node.getId())
-                .map(telemetryMapper::toDto)
+                .map(TelemetryReadingDto::from)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "El nodo " + nodeId + " todavia no tiene lecturas."));
     }
 
-    @Operation(summary = "Historico de telemetria paginado",
-            description = "from y to admiten ISO-8601 (2026-09-03T10:00:00Z) o fecha suelta (2026-09-03). "
-                    + "Por defecto se devuelven las ultimas 24 horas.")
+    @Operation(summary = "Historico de telemetria paginado")
     @GetMapping("/{nodeId}/telemetry")
     public PageResponse<TelemetryReadingDto> telemetry(@PathVariable String nodeId,
                                                        @RequestParam(required = false) String from,
                                                        @RequestParam(required = false) String to,
                                                        @RequestParam(defaultValue = "0") int page,
                                                        @RequestParam(defaultValue = "100") int size) {
-        Node node = nodeService.requireByExternalId(nodeId);
+        Node node = telemetryService.requireNode(nodeId);
         Instant toInstant = RequestTimes.parseOrDefault(to, "to", Instant.now());
         Instant fromInstant = RequestTimes.parseOrDefault(from, "from", RequestTimes.defaultFrom(toInstant));
 
         return PageResponse.of(
                 telemetryService.findRange(node.getId(), fromInstant, toInstant, pageable(page, size)),
-                telemetryMapper::toDto);
+                TelemetryReadingDto::from);
     }
 
-    @Operation(summary = "Eventos de riego del nodo")
+    @Operation(summary = "Eventos de riego reconstruidos",
+            description = "Periodos reales de riego derivados de las transiciones de la electrovalvula, "
+                    + "con el volumen aplicado calculado a partir del contador acumulado.")
     @GetMapping("/{nodeId}/irrigation-events")
     public PageResponse<IrrigationEventDto> irrigationEvents(@PathVariable String nodeId,
                                                              @RequestParam(required = false) String from,
                                                              @RequestParam(required = false) String to,
                                                              @RequestParam(defaultValue = "0") int page,
                                                              @RequestParam(defaultValue = "50") int size) {
-        Node node = nodeService.requireByExternalId(nodeId);
+        Node node = telemetryService.requireNode(nodeId);
         Instant toInstant = RequestTimes.parseOrDefault(to, "to", Instant.now());
         Instant fromInstant = RequestTimes.parseOrDefault(from, "from", RequestTimes.defaultFrom(toInstant));
 
         return PageResponse.of(
-                irrigationEventService.findRange(node.getId(), fromInstant, toInstant, pageable(page, size)),
-                irrigationEventMapper::toDto);
+                irrigationService.findRange(node.getId(), fromInstant, toInstant, pageable(page, size)),
+                IrrigationEventDto::from);
     }
 
-    @Operation(summary = "Riego actualmente en curso, si existe")
-    @GetMapping("/{nodeId}/irrigation-events/current")
-    public IrrigationEventDto currentIrrigation(@PathVariable String nodeId) {
-        Node node = nodeService.requireByExternalId(nodeId);
-        return irrigationEventService.findCurrent(node.getId())
-                .map(irrigationEventMapper::toDto)
-                .orElseThrow(() -> new ResourceNotFoundException(
-                        "El nodo " + nodeId + " no tiene un riego en curso."));
-    }
-
-    @Operation(summary = "Estado operativo del nodo",
-            description = "Marca el nodo como offline cuando no hay comunicacion desde hace mas de "
-                    + "vitialert.node.offline-after-minutes minutos.")
-    @GetMapping("/{nodeId}/status")
-    public NodeStatusDto status(@PathVariable String nodeId) {
-        return telemetryService.buildStatus(nodeService.requireByExternalId(nodeId));
-    }
-
-    @Operation(summary = "Decisiones de riego registradas")
-    @GetMapping("/{nodeId}/decisions")
-    public PageResponse<DecisionRecordDto> decisions(@PathVariable String nodeId,
-                                                     @RequestParam(defaultValue = "0") int page,
-                                                     @RequestParam(defaultValue = "50") int size) {
-        Node node = nodeService.requireByExternalId(nodeId);
-        return PageResponse.of(
-                decisionRecordRepository.findByNode(node.getId(), pageable(page, size)),
-                decisionRecordMapper::toDto);
-    }
-
-    @Operation(summary = "Features temporales IoT calculadas por timestamp real",
-            description = "Los lags se resuelven buscando la observacion mas proxima a t - Xh. "
-                    + "Un lag inexistente devuelve null, nunca cero.")
+    @Operation(summary = "Vector de features de una hora",
+            description = "Devuelve exactamente la misma fila que exporta el dataset, calculada con el "
+                    + "mismo codigo. Permite inspeccionar que los lags se resuelven por timestamp real: "
+                    + "soil_moisture_lag_3h es el bucket de t-3h, y si ese bucket no existe llega null.")
     @GetMapping("/{nodeId}/features")
     public FeatureVector features(@PathVariable String nodeId,
                                   @RequestParam(required = false) String at) {
-        Node node = nodeService.requireByExternalId(nodeId);
-        Instant instant = RequestTimes.parseOrDefault(at, "at", Instant.now());
-        return featureService.computeFeatures(node, instant, null);
+        Node node = telemetryService.requireNode(nodeId);
+        return datasetService.features(node, RequestTimes.parseOrDefault(at, "at", Instant.now()));
     }
 
-    @Operation(summary = "Agregacion temporal de la telemetria",
-            description = "Granularidades disponibles: FIVE_MINUTES, FIFTEEN_MINUTES, HOURLY.")
-    @GetMapping("/{nodeId}/aggregations")
-    public List<AggregatedTelemetryDto> aggregations(@PathVariable String nodeId,
-                                                     @RequestParam(required = false) String from,
-                                                     @RequestParam(required = false) String to,
-                                                     @RequestParam(defaultValue = "HOURLY") Granularity granularity) {
-        Node node = nodeService.requireByExternalId(nodeId);
-        Instant toInstant = RequestTimes.parseOrDefault(to, "to", Instant.now());
-        Instant fromInstant = RequestTimes.parseOrDefault(from, "from", RequestTimes.defaultFrom(toInstant));
-        return aggregationService.aggregate(node.getId(), fromInstant, toInstant, granularity);
+    @Operation(summary = "Contexto satelital del nodo (VitiAI)",
+            description = "Resuelve las coordenadas del nodo y consulta VitiAI. Devuelve 503 si la "
+                    + "integracion esta apagada o el servicio no responde: la telemetria nunca depende "
+                    + "de que VitiAI este disponible.")
+    @GetMapping("/{nodeId}/satellite")
+    public ResponseEntity<Object> satellite(@PathVariable String nodeId) {
+        Node node = telemetryService.requireNode(nodeId);
+        if (node.getLatitud() == null || node.getLongitud() == null) {
+            throw new IllegalArgumentException(
+                    "El nodo " + nodeId + " no tiene coordenadas cargadas: no se puede consultar VitiAI.");
+        }
+        return satelliteClient.fetchFeatures(node.getLatitud(), node.getLongitud())
+                .<ResponseEntity<Object>>map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                        .body(ApiErrorResponse.of(
+                                HttpStatus.SERVICE_UNAVAILABLE.value(),
+                                "SATELLITE_UNAVAILABLE",
+                                satelliteClient.isEnabled()
+                                        ? "VitiAI no respondio."
+                                        : "La integracion satelital esta desactivada.",
+                                "/api/nodes/" + nodeId + "/satellite")));
     }
 
     private static Pageable pageable(int page, int size) {

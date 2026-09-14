@@ -1,9 +1,7 @@
 package com.vitialert.backend.service;
 
-import com.vitialert.backend.config.AggregationProperties;
-import com.vitialert.backend.domain.Granularity;
+import com.vitialert.backend.config.VitiAlertProperties;
 import com.vitialert.backend.domain.TelemetryReading;
-import com.vitialert.backend.dto.AggregatedTelemetryDto;
 import com.vitialert.backend.repository.TelemetryReadingRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -12,40 +10,52 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
 /**
- * Capa de agregacion temporal.
+ * Serie horaria a partir de la telemetria cruda.
  *
- * <p>El ESP32 transmite con una frecuencia que no es constante ni conocida, por lo que
- * jamas se asume "una fila = un minuto" ni "una fila = una hora". Los buckets se calculan
- * truncando el timestamp real de cada lectura al inicio del intervalo (epoch UTC como
- * origen), y cada fila expone su {@code sample_count} para que el analisis posterior pueda
- * descartar buckets con poca cobertura.</p>
+ * <p>El ESP32 transmite con frecuencia irregular, asi que nunca se asume "una fila = una
+ * hora": cada lectura se ubica en su bucket truncando su timestamp real a la hora en punto
+ * (UTC como origen). Dos exportaciones de rangos distintos producen exactamente los mismos
+ * buckets para el periodo que comparten.</p>
  *
- * <p>El tiempo de valvula abierta se integra sobre los intervalos reales entre lecturas
- * consecutivas, ignorando huecos mayores a {@code vitialert.aggregation.max-gap-seconds}
- * (esos huecos significan nodo offline, no riego continuo). El intervalo se atribuye al
- * bucket de la lectura anterior, que es la que declara el estado durante ese intervalo.</p>
+ * <p>El tiempo de valvula abierta no es una agregacion de filas sino una integracion sobre
+ * los intervalos entre lecturas consecutivas. Un hueco mayor a
+ * {@code vitialert.dataset.max-gap-seconds} significa nodo offline y no se contabiliza: si
+ * el nodo estuvo caido media hora con la valvula abierta, no se puede afirmar que rego media
+ * hora.</p>
  */
 @Service
 public class AggregationService {
 
+    private static final Duration BUCKET = Duration.ofHours(1);
+
     private final TelemetryReadingRepository telemetryReadingRepository;
-    private final AggregationProperties properties;
+    private final VitiAlertProperties properties;
 
     public AggregationService(TelemetryReadingRepository telemetryReadingRepository,
-                              AggregationProperties properties) {
+                              VitiAlertProperties properties) {
         this.telemetryReadingRepository = telemetryReadingRepository;
         this.properties = properties;
     }
 
+    /** Trunca un instante al inicio de su hora. */
+    public static Instant floorToHour(Instant instant) {
+        long seconds = BUCKET.getSeconds();
+        return Instant.ofEpochSecond(Math.floorDiv(instant.getEpochSecond(), seconds) * seconds);
+    }
+
+    /**
+     * Serie horaria del nodo, indexada por el inicio de cada bucket y en orden cronologico.
+     * Solo aparecen las horas que tienen al menos una lectura: un hueco es una hora ausente,
+     * no una hora en cero.
+     */
     @Transactional(readOnly = true)
-    public List<AggregatedTelemetryDto> aggregate(Long nodeId, Instant from, Instant to, Granularity granularity) {
+    public Map<Instant, HourlyPoint> hourlySeries(Long nodeId, Instant from, Instant to) {
         validateRange(from, to);
 
         List<TelemetryReading> readings = telemetryReadingRepository.findRangeAsc(nodeId, from, to);
@@ -53,28 +63,28 @@ public class AggregationService {
 
         TelemetryReading previous = null;
         Accumulator previousBucket = null;
-        long maxGap = properties.maxGapSeconds();
+        long maxGap = properties.dataset().maxGapSeconds();
 
         for (TelemetryReading reading : readings) {
-            Instant bucketStart = granularity.floor(reading.getTimestampReceived());
-            Accumulator accumulator = buckets.computeIfAbsent(bucketStart, key -> new Accumulator());
+            Accumulator accumulator = buckets.computeIfAbsent(
+                    floorToHour(reading.getTimestampReceived()), key -> new Accumulator());
             accumulator.add(reading);
 
             if (previous != null && previousBucket != null) {
                 long gapSeconds = Duration.between(previous.getTimestampReceived(),
                         reading.getTimestampReceived()).getSeconds();
                 if (gapSeconds > 0 && gapSeconds <= maxGap) {
+                    // El intervalo se atribuye al bucket de la lectura ANTERIOR, que es la que
+                    // declara el estado de la valvula durante ese intervalo.
                     if (previous.isValveOpen()) {
                         previousBucket.valveOpenSeconds += gapSeconds;
                     }
-                    BigDecimal previousVolume = previous.getVolumenTotalL();
-                    BigDecimal currentVolume = reading.getVolumenTotalL();
-                    if (previousVolume != null && currentVolume != null) {
-                        BigDecimal delta = currentVolume.subtract(previousVolume);
-                        // Un delta negativo significa reinicio del contador del ESP32: se
-                        // computa como 0 en lugar de inventar un consumo negativo. El bucket
-                        // igual queda marcado como observado (0 L consumidos es un dato real,
-                        // distinto de "no hay informacion").
+                    BigDecimal before = previous.getVolumenTotalL();
+                    BigDecimal after = reading.getVolumenTotalL();
+                    if (before != null && after != null) {
+                        BigDecimal delta = after.subtract(before);
+                        // Un delta negativo es un reinicio del contador del ESP32: se computa
+                        // como 0 en lugar de inventar un consumo negativo.
                         previousBucket.addVolume(delta.signum() > 0 ? delta : BigDecimal.ZERO);
                     }
                 }
@@ -84,24 +94,9 @@ public class AggregationService {
             previousBucket = accumulator;
         }
 
-        List<AggregatedTelemetryDto> result = new ArrayList<>(buckets.size());
-        for (Map.Entry<Instant, Accumulator> entry : buckets.entrySet()) {
-            result.add(entry.getValue().toDto(entry.getKey()));
-        }
-        return result;
-    }
-
-    /** Igual que {@link #aggregate} pero indexado por instante de inicio de bucket. */
-    @Transactional(readOnly = true)
-    public Map<Instant, AggregatedTelemetryDto> aggregateIndexed(Long nodeId,
-                                                                 Instant from,
-                                                                 Instant to,
-                                                                 Granularity granularity) {
-        Map<Instant, AggregatedTelemetryDto> indexed = new LinkedHashMap<>();
-        for (AggregatedTelemetryDto row : aggregate(nodeId, from, to, granularity)) {
-            indexed.put(row.bucketStart(), row);
-        }
-        return indexed;
+        Map<Instant, HourlyPoint> series = new LinkedHashMap<>(buckets.size());
+        buckets.forEach((hour, accumulator) -> series.put(hour, accumulator.toPoint(hour)));
+        return series;
     }
 
     private void validateRange(Instant from, Instant to) {
@@ -112,9 +107,9 @@ public class AggregationService {
             throw new IllegalArgumentException("El parametro from debe ser anterior a to.");
         }
         long days = Duration.between(from, to).toDays();
-        if (days > properties.maxRangeDays()) {
+        if (days > properties.dataset().maxRangeDays()) {
             throw new IllegalArgumentException("El rango solicitado (" + days + " dias) supera el maximo de "
-                    + properties.maxRangeDays() + " dias.");
+                    + properties.dataset().maxRangeDays() + " dias.");
         }
     }
 
@@ -123,17 +118,16 @@ public class AggregationService {
 
         private int sampleCount;
 
-        private double tempSum;
-        private int tempCount;
-        private Double tempMax;
-
-        private double humiditySum;
-        private int humidityCount;
-
         private double soilSum;
         private int soilCount;
         private Double soilMin;
         private Double soilMax;
+
+        private double tempSum;
+        private int tempCount;
+
+        private double humiditySum;
+        private int humidityCount;
 
         private double windSum;
         private int windCount;
@@ -141,7 +135,6 @@ public class AggregationService {
 
         private BigDecimal flowSum = BigDecimal.ZERO;
         private int flowCount;
-        private BigDecimal flowMax;
 
         private BigDecimal volumeUsed = BigDecimal.ZERO;
         private boolean volumeObserved;
@@ -151,25 +144,24 @@ public class AggregationService {
         void add(TelemetryReading reading) {
             sampleCount++;
 
-            Double temp = reading.getTemperaturaAmbienteC();
-            if (temp != null) {
-                tempSum += temp;
-                tempCount++;
-                tempMax = tempMax == null ? temp : Math.max(tempMax, temp);
-            }
-
-            Double humidity = reading.getHumedadRelativaPct();
-            if (humidity != null) {
-                humiditySum += humidity;
-                humidityCount++;
-            }
-
             Double soil = reading.getHumedadSueloPct();
             if (soil != null) {
                 soilSum += soil;
                 soilCount++;
                 soilMin = soilMin == null ? soil : Math.min(soilMin, soil);
                 soilMax = soilMax == null ? soil : Math.max(soilMax, soil);
+            }
+
+            Double temp = reading.getTemperaturaAmbienteC();
+            if (temp != null) {
+                tempSum += temp;
+                tempCount++;
+            }
+
+            Double humidity = reading.getHumedadRelativaPct();
+            if (humidity != null) {
+                humiditySum += humidity;
+                humidityCount++;
             }
 
             Double wind = reading.getVelocidadVientoKmh();
@@ -183,7 +175,6 @@ public class AggregationService {
             if (flow != null) {
                 flowSum = flowSum.add(flow);
                 flowCount++;
-                flowMax = flowMax == null ? flow : flowMax.max(flow);
             }
         }
 
@@ -192,20 +183,18 @@ public class AggregationService {
             volumeObserved = true;
         }
 
-        AggregatedTelemetryDto toDto(Instant bucketStart) {
-            return new AggregatedTelemetryDto(
-                    bucketStart,
+        HourlyPoint toPoint(Instant hour) {
+            return new HourlyPoint(
+                    hour,
                     sampleCount,
-                    mean(tempSum, tempCount),
-                    tempMax,
-                    mean(humiditySum, humidityCount),
                     mean(soilSum, soilCount),
                     soilMin,
                     soilMax,
+                    mean(tempSum, tempCount),
+                    mean(humiditySum, humidityCount),
                     mean(windSum, windCount),
                     windMax,
                     flowCount == 0 ? null : flowSum.divide(BigDecimal.valueOf(flowCount), 3, RoundingMode.HALF_UP),
-                    flowMax,
                     volumeObserved ? volumeUsed.setScale(3, RoundingMode.HALF_UP) : null,
                     valveOpenSeconds);
         }

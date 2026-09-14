@@ -50,10 +50,6 @@ public class Node {
     @Column(name = "longitud")
     private Double longitud;
 
-    /** Clave opcional exigida en la cabecera {@code X-Node-Key} cuando la seguridad de nodo esta activada. */
-    @Column(name = "api_key", length = 128)
-    private String apiKey;
-
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -146,14 +142,6 @@ public class Node {
 
     public void setLongitud(Double longitud) {
         this.longitud = longitud;
-    }
-
-    public String getApiKey() {
-        return apiKey;
-    }
-
-    public void setApiKey(String apiKey) {
-        this.apiKey = apiKey;
     }
 
     public Instant getCreatedAt() {

@@ -1,73 +1,66 @@
 # VitiAlert / Vitic-AI — Backend
 
-Backend **orquestador** del Sistema de Soporte de Decisiones para gestión hídrica en
-vitivinicultura. Tesis de Licenciatura en Análisis de Datos.
+Backend del Sistema de Soporte de Decisiones para gestión hídrica en vitivinicultura.
+Tesis de Licenciatura en Análisis de Datos.
 
-Java 21 · Spring Boot 3.3 · Spring Web · Spring Data JPA · Bean Validation · Flyway · PostgreSQL · Maven
+Java 21 · Spring Boot 3.3 · Spring Data JPA · Bean Validation · Flyway · PostgreSQL · Maven
 
 ---
 
-## 1. Objetivo
+## Qué hace, en una frase
 
-El backend Java es el punto en el que se juntan las tres fuentes de información del sistema
-y desde el que se gobierna la electroválvula del nodo físico.
+> Recibe los datos del ESP32, los guarda, reconstruye los eventos de riego, integra la
+> meteorología y el contexto satelital, construye el dataset y —más adelante— consulta el
+> modelo de Ciencia de Datos.
+
+## Arquitectura
 
 ```
-        IoT (ESP32)
-              \
-Meteorología ---> BACKEND JAVA ---> dataset / features
-(Data Miner)  /                ---> futuro modelo ML
-             /                 ---> recomendación de riego
-   Satélite
-(VitiAlert Python)
+                       ESP32
+                         │  POST /api/data
+                         ▼
+                   Backend Java  ──────►  PostgreSQL
+                         │
+       ┌─────────────────┼─────────────────┐
+       │                 │                 │
+  Data Miner          VitiAI          Modelo Python
+  (histórico        (features          (entrena e
+ meteorológico)      satelitales)        infiere)
+       │                 │                 │
+       └─────────────────┴─────────────────┘
+                         │
+                 recomendación de riego
+                         ▼
+                       ESP32
 ```
 
-Reparto de responsabilidades:
+Cada pieza tiene una sola responsabilidad:
 
-| Java (este proyecto)                 | Python (módulos existentes)          |
-|--------------------------------------|--------------------------------------|
-| Recibir y validar la telemetría      | Data Miner (Open-Meteo ERA5, scraping) |
-| Persistir de forma inmutable         | VitiAlert satelital (GOES, Sentinel, NDVI) |
-| Reconstruir eventos de riego         | Entrenamiento y evaluación del modelo |
-| Construir features temporales        | Serialización (.pkl)                  |
-| Integrar y orquestar las fuentes     | Inferencia                            |
-| Consultar la inferencia              |                                       |
-| Tomar la decisión final y responder al ESP32 |                               |
+| Componente | Responsabilidad |
+|---|---|
+| **Backend (este proyecto)** | Integra y almacena. Valida, persiste, reconstruye riegos, construye el dataset |
+| **Data Miner** (Python) | Genera el histórico meteorológico (Open-Meteo ERA5 + scraping) |
+| **VitiAI** (Python) | Genera las features satelitales (GOES, Sentinel) |
+| **Modelo ML** (Python) | Entrena, evalúa e infiere |
 
 **Java nunca carga un `.pkl`.** La única vía hacia el modelo es HTTP.
 
----
+## El flujo completo
 
-## 2. Arquitectura
-
-```
-ESP32  ──POST /api/data──►  Spring Boot  ──►  PostgreSQL
-                                │
-                                ├──► Data Miner        (CSV import / REST opcional)
-                                ├──► VitiAlert satelital (HTTP, opcional)
-                                └──► API Python de ML   (HTTP, opcional)
-                                          │
-                                          ▼
-                                 decisión de riego  ──►  ESP32
-```
-
-Arquitectura por capas, sin microservicios, sin colas y sin caché distribuida:
-
-```
-controller/   endpoints REST, sin lógica de negocio
-service/      reglas, features, agregación, decisión, importación, exportación
-repository/   consultas Spring Data JPA, siempre acotadas por nodo y ventana temporal
-domain/       entidades JPA y enums
-dto/          contratos de entrada y salida (JSON snake_case)
-mapper/       entidad <-> DTO
-client/       integraciones HTTP con los servicios Python
-config/       propiedades, clientes HTTP, seguridad opcional, OpenAPI
-exception/    @RestControllerAdvice y respuesta de error uniforme
-```
+1. El ESP32 envía datos.
+2. Java los valida y los guarda.
+3. Java reconstruye los eventos de riego.
+4. El histórico meteorológico se importa desde el Data Miner.
+5. VitiAI puede consultarse para obtener contexto satelital.
+6. Java genera una serie horaria.
+7. Java exporta un dataset.
+8. Python entrena el modelo.
+9. En el futuro Java consulta ese modelo.
+10. Si el modelo no está, usa `decision_riego_local`.
 
 ---
 
-## 3. Contrato con el ESP32 (no cambia)
+## Contrato con el ESP32 (no cambia)
 
 **Request** — `POST /api/data`
 
@@ -89,59 +82,28 @@ exception/    @RestControllerAdvice y respuesta de error uniforme
 **Response**
 
 ```json
-{
-  "abrir_valvula": true,
-  "encender_luz": true
-}
+{ "abrir_valvula": true, "encender_luz": true }
 ```
 
-Mientras no exista un motor de decisión avanzado habilitado:
+Mientras el modelo esté apagado: `abrir_valvula = encender_luz = decision_riego_local`.
 
-```
-abrir_valvula = encender_luz = decision_riego_local
-```
-
-La arquitectura ya contempla la prioridad futura:
-
-```
-decisión backend  →  si existe y es confiable  →  se usa
-                  →  si no                     →  fallback a decision_riego_local
-```
-
-El nodo nuevo se da de alta solo la primera vez que envía datos
-(`vitialert.node.auto-register=true`), así que **apuntar la maqueta al backend Java solo
-requiere cambiar la URL del servidor.**
-
-### curl de prueba
+El nodo se da de alta solo en su primer POST, así que **apuntar la maqueta al backend solo
+requiere cambiar la URL del servidor**.
 
 ```bash
 curl -X POST http://localhost:8080/api/data \
   -H "Content-Type: application/json" \
-  -d '{
-    "nodo_id": "1",
-    "temperatura_ambiente_c": 28.4,
-    "humedad_relativa_pct": 45,
-    "humedad_suelo_pct": 22,
-    "humedad_suelo_raw": 2730,
-    "velocidad_viento_kmh": 18.5,
-    "caudal_l_min": 7.80,
-    "volumen_total_l": 124.60,
-    "valvula_abierta_actual": true,
-    "decision_riego_local": true
-  }'
+  -d '{"nodo_id":"1","temperatura_ambiente_c":28.4,"humedad_relativa_pct":45,
+       "humedad_suelo_pct":22,"humedad_suelo_raw":2730,"velocidad_viento_kmh":18.5,
+       "caudal_l_min":7.80,"volumen_total_l":124.60,
+       "valvula_abierta_actual":true,"decision_riego_local":true}'
 ```
 
 ---
 
-## 4. Cómo ejecutar
+## Cómo ejecutar
 
-### Requisitos
-
-- Java 21
-- Maven 3.9+
-- PostgreSQL 14+
-
-### Base de datos
+**Requisitos:** Java 21, Maven 3.9+, PostgreSQL 14+.
 
 ```sql
 CREATE DATABASE vitialert;
@@ -149,182 +111,115 @@ CREATE USER vitialert WITH PASSWORD 'vitialert';
 GRANT ALL PRIVILEGES ON DATABASE vitialert TO vitialert;
 ```
 
-Flyway crea todo el esquema en el primer arranque (`V1__init_schema.sql`).
-
-### Variables de entorno
-
-| Variable | Por defecto | Descripción |
-|---|---|---|
-| `DB_URL` | `jdbc:postgresql://localhost:5432/vitialert` | URL JDBC |
-| `DB_USERNAME` | `vitialert` | usuario |
-| `DB_PASSWORD` | `vitialert` | contraseña |
-| `SERVER_PORT` | `8080` | puerto HTTP |
-| `NODE_OFFLINE_AFTER_MINUTES` | `10` | minutos sin datos para marcar el nodo offline |
-| `SATELLITE_ENABLED` / `SATELLITE_BASE_URL` | `false` / `http://localhost:8000` | VitiAlert satelital |
-| `WEATHER_PULL_ENABLED` / `WEATHER_BASE_URL` | `false` / `http://localhost:8001` | pull REST del Data Miner |
-| `ML_ENABLED` / `ML_BASE_URL` | `false` / `http://localhost:8002` | API Python de inferencia |
-| `NODE_KEY_ENABLED` | `false` | exige `X-Node-Key` en `/api/data` |
-| `ADMIN_KEY_ENABLED` / `ADMIN_KEY` | `false` / vacío | exige `X-Admin-Key` en `/api/admin/**` |
-
-Hay un `.env.example` como plantilla. **El backend no guarda contraseñas de WiFi.**
-
-### Comandos
+Flyway crea y migra el esquema solo en el arranque.
 
 ```bash
-mvn clean verify          # compila y ejecuta todos los tests (H2 en memoria)
-mvn spring-boot:run       # arranca el backend
-mvn clean package && java -jar target/vitialert-backend-0.1.0.jar
+mvn clean verify        # compila y corre los 23 tests (H2 en memoria, sin Docker)
+mvn spring-boot:run     # arranca
 ```
 
-Windows (PowerShell):
+> **Si no tenés Maven instalado en el sistema**, el proyecto trae una copia portátil en
+> `.tools/` (ignorada por git). Usala con la ruta completa:
+>
+> ```powershell
+> .tools\apache-maven-3.9.11\bin\mvn.cmd clean verify
+> ```
+>
+> Se puede borrar `.tools/` en cualquier momento; instalar Maven en el sistema lo reemplaza.
 
-```powershell
-$env:DB_URL="jdbc:postgresql://localhost:5432/vitialert"
-$env:DB_USERNAME="vitialert"
-$env:DB_PASSWORD="vitialert"
-mvn spring-boot:run
-```
+| Variable | Por defecto |
+|---|---|
+| `DB_URL` | `jdbc:postgresql://localhost:5432/vitialert` |
+| `DB_USERNAME` / `DB_PASSWORD` | `vitialert` / `vitialert` |
+| `SERVER_PORT` | `8080` |
+| `SATELLITE_ENABLED` / `SATELLITE_BASE_URL` | `false` / `http://localhost:8000` |
+| `ML_ENABLED` / `ML_BASE_URL` | `false` / `http://localhost:8002` |
 
-### Swagger / OpenAPI
-
-- Swagger UI: <http://localhost:8080/swagger-ui.html>
-- OpenAPI JSON: <http://localhost:8080/v3/api-docs>
+Swagger: <http://localhost:8080/swagger-ui.html>
 
 ---
 
-## 5. Endpoints
+## Endpoints (9)
 
-### IoT
-
-| Método | Ruta | Descripción |
+| Método | Ruta | Qué hace |
 |---|---|---|
-| POST | `/api/data` | recepción de telemetría del ESP32 |
-| GET | `/api/nodes` | lista de nodos |
-| GET | `/api/nodes/{nodeId}` | detalle del nodo |
-| GET | `/api/nodes/{nodeId}/telemetry/latest` | última lectura |
-| GET | `/api/nodes/{nodeId}/telemetry?from&to&page&size` | histórico paginado |
-| GET | `/api/nodes/{nodeId}/irrigation-events?from&to&page&size` | eventos de riego |
-| GET | `/api/nodes/{nodeId}/irrigation-events/current` | riego en curso |
-| GET | `/api/nodes/{nodeId}/status` | estado operativo (online/offline) |
-| GET | `/api/nodes/{nodeId}/decisions?page&size` | trazabilidad de decisiones |
-| GET | `/api/nodes/{nodeId}/features?at` | features temporales IoT |
-| GET | `/api/nodes/{nodeId}/aggregations?from&to&granularity` | agregación temporal |
-| GET | `/api/health` | estado del backend y de las integraciones |
+| POST | `/api/data` | Telemetría del ESP32 |
+| GET | `/api/nodes` | Lista de nodos |
+| GET | `/api/nodes/{id}/telemetry/latest` | Última lectura |
+| GET | `/api/nodes/{id}/telemetry` | Histórico paginado (`from`, `to`, `page`, `size`) |
+| GET | `/api/nodes/{id}/irrigation-events` | Riegos reconstruidos |
+| GET | `/api/nodes/{id}/features` | Vector de features de una hora (`at`) |
+| GET | `/api/nodes/{id}/satellite` | Contexto satelital de VitiAI |
+| POST | `/api/weather/import` | Importa el CSV del Data Miner (`file`, `source`) |
+| GET | `/api/dataset/export` | Dataset horario en CSV (`nodeId`, `from`, `to`) |
+| GET | `/health` | Estado del backend y sus integraciones |
 
-### Administración
-
-| Método | Ruta | Descripción |
-|---|---|---|
-| POST | `/api/admin/weather/import` | importa el CSV diario del Data Miner (`file`, `source`) |
-| GET | `/api/admin/dataset/export?nodeId&from&to&granularity` | exporta el dataset unificado en CSV |
-
-`from` / `to` aceptan ISO-8601 (`2026-09-03T10:00:00Z`) o fecha suelta (`2026-09-03`,
-interpretada como el comienzo del día en UTC). Todo el backend trabaja en **UTC**.
-
-Ejemplo de `status`:
-
-```json
-{
-  "node_id": "1",
-  "last_seen": "2026-09-03T14:32:11Z",
-  "online": true,
-  "offline_after_minutes": 10,
-  "latest": { "...": "..." },
-  "current_irrigation": { "...": "..." }
-}
-```
-
-Ejemplos de administración:
+`from` / `to` admiten ISO-8601 (`2026-09-03T10:00:00Z`) o fecha suelta (`2026-09-03`).
+Todo el backend trabaja en **UTC**.
 
 ```bash
-curl -X POST http://localhost:8080/api/admin/weather/import \
-  -F "file=@dataset_meteorologico.csv" \
-  -F "source=OPEN_METEO_ERA5"
+curl -X POST http://localhost:8080/api/weather/import \
+  -F "file=@dataset_meteorologico.csv" -F "source=OPEN_METEO_ERA5"
 
-curl "http://localhost:8080/api/admin/dataset/export?nodeId=1&from=2026-08-01&to=2026-09-01&granularity=HOURLY" \
-  -o dataset.csv
+curl "http://localhost:8080/api/dataset/export?nodeId=1&from=2026-08-01&to=2026-09-01" -o dataset.csv
 ```
 
 ---
 
-## 6. Modelo de datos
+## Estructura
+
+```
+controller/  4   TelemetryController · NodeController · DataController · RequestTimes
+service/     7   TelemetryService · IrrigationService · AggregationService
+                 DatasetService · WeatherService · HourlyPoint · SimpleCsvParser
+client/      2   SatelliteClient (VitiAI) · PredictionClient (modelo Python)
+repository/  4   Node · TelemetryReading · IrrigationEvent · WeatherObservation
+domain/      6   4 entidades + 2 enums
+dto/        11   Contratos de entrada y salida, en snake_case
+exception/   3   Manejo uniforme de errores
+config/      2   VitiAlertProperties · OpenApiConfig
+```
+
+40 clases, ~3.300 líneas.
+
+## Modelo de datos
 
 | Tabla | Contenido |
 |---|---|
-| `node` | nodo físico (ESP32). `latitud`/`longitud` solo para resolver información espacial, **no son features** |
-| `telemetry_reading` | una fila **inmutable** por cada POST; nunca se sobrescribe |
-| `irrigation_event` | período real de riego reconstruido por transición de válvula |
-| `decision_record` | decisión local, decisión del backend y decisión final de cada respuesta |
-| `weather_observation` | meteorología diaria del Data Miner (fuente separada de la telemetría) |
-
-Índices creados por la migración:
-
-```
-telemetry_reading (node_id, timestamp_received DESC)
-telemetry_reading (node_id, timestamp_received) WHERE humedad_suelo_pct IS NOT NULL
-irrigation_event  (node_id, started_at DESC) y (node_id, ended_at)
-irrigation_event  UNIQUE (node_id) WHERE estado = 'OPEN'
-decision_record   (node_id, decision_timestamp DESC)
-weather_observation (observation_date) y UNIQUE (observation_date, source)
-```
+| `node` | Nodo físico. `latitud`/`longitud` solo para consultar meteorología y satélite; **no son features** |
+| `telemetry_reading` | Una fila **inmutable** por POST. Nunca se sobrescribe |
+| `irrigation_event` | Período real de riego, derivado de las transiciones de la válvula |
+| `weather_observation` | Meteorología diaria del Data Miner (fuente separada de la telemetría) |
 
 ---
 
-## 7. Calidad del dato
+## Lo importante para la tesis
 
-La validación de Bean Validation rechaza únicamente lo **físicamente imposible**:
+### Los lags se calculan por timestamp real
 
-```
--40 <= temperatura <= 70      0 <= humedad relativa <= 100
-  0 <= humedad suelo <= 100   humedad_suelo_raw >= 0
-  0 <= viento <= 200          caudal >= 0        volumen >= 0
-```
+El prototipo Python usaba `shift(1)`, `shift(3)`, `shift(24)`, que desplazan **posiciones de
+fila**. Con el ESP32 transmitiendo cada pocos segundos, `shift(24)` no es "hace 24 horas":
+son minutos. Y si el target se construye con `shift(-24)`, el modelo predice unos minutos
+hacia adelante, muestra un R² altísimo y en realidad aprendió a copiar la última medición.
 
-Todo lo demás se **acepta y se marca** con un `quality_flag` y una nota legible:
+Acá los lags y el target se resuelven sobre la **serie horaria**, buscando el bucket cuyo
+inicio es exactamente `t − Xh` (o `t + 24h` para el target). Si ese bucket no existe, la
+celda queda **vacía**.
 
-| Flag | Cuándo |
-|---|---|
-| `VALID` | todo presente y dentro del rango operativo |
-| `MISSING` | falta alguna variable central del payload |
-| `SENSOR_ERROR` | el ADC quedó pegado a un extremo (0 o 4095) |
-| `OUT_OF_RANGE` | valor posible pero fuera del rango operativo plausible |
-| `SUSPECT` | caudal con válvula cerrada (posible fuga), válvula abierta sin caudal (obstrucción), o RAW sin cambios por demasiado tiempo (sensor congelado) |
+### Un faltante es un faltante
 
-**Ninguno de estos chequeos altera la decisión de riego.** Solo generan trazabilidad.
+Nunca se rellena con cero. Un `0` en `soil_moisture_lag_24h` significa "hace 24 horas el
+suelo estaba completamente seco" — un valor válido del dominio que el modelo interpretaría
+como tal. Con celda vacía, pandas lo lee como `NaN`, `df.isna().sum()` lo muestra, y la
+decisión de imputar se toma explícitamente en el análisis.
 
----
+### Una sola implementación de features
 
-## 8. Features temporales — corrección respecto del prototipo Python
+`DatasetService` es la única clase que calcula features en todo el sistema. El CSV de
+entrenamiento, el endpoint de inspección y la consulta al modelo usan exactamente el mismo
+código, así que no puede aparecer *training/serving skew*.
 
-El `server.py` actual usa `shift(1)`, `shift(3)`, `shift(6)`, `shift(24)`, que son
-desplazamientos **por posición de fila**. Como el ESP32 transmite cada pocos segundos,
-`shift(1)` no es "hace una hora": es "la observación anterior".
-
-En Java los lags se resuelven **siempre por timestamp real**: se busca la observación más
-próxima a `t - Xh` dentro de una tolerancia de `min(30 min, 25 % del lag)`. Si no existe
-ninguna, el valor es **`null` / celda vacía, nunca cero** — un cero artificial sería
-indistinguible de "suelo completamente seco" y arruinaría el entrenamiento.
-
-Features IoT calculadas hoy: `soil_moisture_lag_1h/3h/6h/24h`, `soil_moisture_slope_3h/12h`
-(puntos porcentuales por hora), `soil_moisture_mean_24h`, `irrigation_volume_1h/24h`.
-Las meteorológicas (`precipitation_mm`, `et0_mm`, `vpd_kpa`, `solar_radiation`) provienen
-de `weather_observation` y se integran en el dataset exportado.
-
----
-
-## 9. Agregación temporal y dataset
-
-Nunca se asume "un registro = un minuto" ni "un registro = una hora". Los buckets se
-calculan truncando el timestamp real (`FIVE_MINUTES`, `FIFTEEN_MINUTES`, `HOURLY`) y cada
-fila expone su `sample_count` para poder descartar buckets con poca cobertura.
-
-El tiempo de válvula abierta se integra sobre los intervalos reales entre lecturas,
-ignorando huecos mayores a `vitialert.aggregation.max-gap-seconds` (un hueco es nodo
-offline, no riego continuo). El consumo de agua se calcula sumando los incrementos del
-contador acumulado; un salto negativo se interpreta como reinicio del ESP32 y no como
-consumo.
-
-Columnas del CSV exportado:
+### Columnas del dataset
 
 ```
 timestamp, node_id, soil_moisture_pct,
@@ -333,143 +228,52 @@ soil_moisture_slope_3h, soil_moisture_slope_12h, soil_moisture_mean_24h,
 temperature_c, relative_humidity_pct, wind_speed_kmh, flow_l_min,
 irrigation_volume_1h, irrigation_volume_24h,
 precipitation_mm, et0_mm, vpd_kpa, solar_radiation,
-sample_count, valve_open_seconds,
-soil_moisture_t_plus_24h
+sample_count, soil_moisture_t_plus_24h
 ```
 
-El target `soil_moisture_t_plus_24h` se obtiene buscando el bucket cuyo inicio es
-exactamente `t + 24h`. **No se usa `shift(24)`**: con huecos, `shift` corre el target y
-contamina el entrenamiento; acá un hueco produce simplemente un target faltante.
+Notas metodológicas:
 
----
+- `sample_count` permite descartar horas con poca cobertura.
+- `soil_moisture_mean_24h` se publica solo si existe al menos la mitad de los buckets.
+- Las variables meteorológicas son **diarias** y se replican en las 24 filas del día.
+- El tiempo de válvula abierta se integra sobre los intervalos reales; un hueco mayor a
+  120 s es nodo offline y no se cuenta como riego.
 
-## 10. Decisión de riego
+### Calidad del dato
 
-`IrrigationDecisionService` implementa la prioridad backend → fallback local. Mientras
-`vitialert.ml.enabled=false` **no se calculan features en el camino caliente ni se hace
-ninguna llamada de red**: la respuesta al ESP32 se mantiene mínima.
+Bean Validation rechaza lo **físicamente imposible** (HTTP 400):
 
-Cada respuesta queda registrada en `decision_record` con `decision_local`,
-`decision_backend`, `decision_final`, `accion` (`ABRIR` / `CERRAR` / `MANTENER`), `motivo`,
-`source` (`LOCAL_FALLBACK`, `BACKEND_RULES`, `ML_MODEL`, `MANUAL`) y `model_version`.
-
-**No hay ninguna IA ficticia ni lógica meteorológica inventada.**
-
----
-
-## 11. Resiliencia de las integraciones
-
-Si VitiAlert satelital, el Data Miner o la API de inferencia están caídos:
-
-- la telemetría **se sigue aceptando y persistiendo**;
-- se registra la indisponibilidad con `WARN`;
-- la válvula cae al fallback local.
-
-Los clientes HTTP tienen timeouts cortos y devuelven `Optional.empty()` en lugar de
-propagar excepciones. Hay un test dedicado que apunta las integraciones a puertos cerrados.
-
----
-
-## 12. Errores
-
-`@RestControllerAdvice` con respuesta uniforme:
-
-```json
-{
-  "timestamp": "2026-09-03T14:32:11.482Z",
-  "status": 400,
-  "error": "VALIDATION_ERROR",
-  "message": "El payload no cumple las validaciones de rango del sistema.",
-  "path": "/api/data",
-  "details": { "temperaturaAmbienteC": "temperatura_ambiente_c debe ser <= 70" }
-}
+```
+-40 ≤ temperatura ≤ 70    0 ≤ humedades ≤ 100    0 ≤ viento ≤ 200
+caudal ≥ 0    volumen ≥ 0    humedad_suelo_raw ≥ 0
 ```
 
----
+Todo lo demás se acepta y se marca:
 
-## 13. Seguridad
+| Flag | Cuándo |
+|---|---|
+| `VALID` | Todo presente y coherente |
+| `MISSING` | Falta alguna variable central del payload |
+| `SUSPECT` | Caudal con la válvula cerrada (fuga), o válvula abierta sin caudal (obstrucción) |
 
-Deliberadamente mínima para no romper el prototipo, sin Spring Security y sin OAuth para
-el ESP32:
-
-- `X-Node-Key` sobre `/api/data`, clave por nodo en `node.api_key`
-  (`NODE_KEY_ENABLED=true` para activarla);
-- `X-Admin-Key` sobre `/api/admin/**` (`ADMIN_KEY_ENABLED=true` + `ADMIN_KEY=...`).
-
-Ambas desactivadas por defecto para el ambiente local.
+**Ningún flag modifica la decisión de riego.** La detección de sensor congelado se hace en
+el preprocesamiento del dataset en Python, con `diff()`.
 
 ---
 
-## 14. Tests
+## Seguridad
 
-```bash
-mvn test
-```
+**La autenticación está fuera del alcance del prototipo actual.** El sistema corre en
+ambiente de laboratorio, sin datos personales y sin exposición pública. No hay Spring
+Security, ni claves por nodo, ni filtros propios. Si el sistema saliera del laboratorio,
+haría falta HTTPS y autenticación real.
 
-JUnit 5 + H2 en memoria (modo PostgreSQL). Cubren:
+## Pendientes
 
-- POST válido con el payload real del ESP32 y persistencia de la lectura;
-- validaciones de rango (temperatura, humedad, caudal, viento, `nodo_id`);
-- payload incompleto aceptado y marcado `MISSING`;
-- caudal con válvula cerrada marcado `SUSPECT`;
-- apertura y cierre de evento de riego;
-- cálculo de volumen aplicado, duración y caudal promedio;
-- reinicio del contador del ESP32 → `CLOSED_WITH_WARNING`;
-- lags por timestamp real con ruido de alta frecuencia (el test falla si se usa `shift`);
-- tolerancia proporcional del lag;
-- media de 24 h;
-- agregación horaria, integración de válvula abierta y consumo de agua;
-- huecos de datos que no se contabilizan como riego;
-- exportación del dataset: cabecera, lags/target por timestamp y celdas vacías;
-- integración de la meteorología diaria;
-- importación CSV idempotente, separador `;`, fechas `dd/MM/yyyy` y celdas vacías → `null`;
-- nodo online / offline / sin telemetría;
-- satélite y modelo caídos → telemetría guardada + fallback local;
-- respuesta `abrir_valvula` / `encender_luz`.
-
----
-
-## 15. Decisiones técnicas
-
-1. **Sin Lombok.** Menos magia, cero riesgo de configuración de procesadores de anotaciones
-   y código más defendible en la revisión de tesis. Los DTO son `record`, así que la
-   verbosidad queda acotada a las entidades.
-2. **`BigDecimal` para agua, `Double` para ambiente.** El volumen es un contador acumulado
-   sobre el que se hacen restas: ahí la precisión importa. La temperatura o la humedad
-   están limitadas por el sensor, no por el tipo.
-3. **`ddl-auto: none` + Flyway** como única fuente de verdad del esquema en producción.
-   En los tests Hibernate genera el esquema en H2 porque la migración usa índices
-   parciales propios de PostgreSQL.
-4. **Sin interfaces vacías.** `PredictionService`, `SatelliteClient` y `WeatherClient` son
-   clases concretas: no hay una segunda implementación que justifique una abstracción.
-5. **Alta automática de nodos.** Permite conectar la maqueta actual sin ninguna carga previa.
-6. **Filtro de clave propio en lugar de Spring Security.** El requisito es una cabecera
-   opcional; agregar Spring Security implicaría una cadena de filtros y un modelo de
-   usuarios que el prototipo no necesita.
-7. **CSV escrito a mano** (parser y writer mínimos) en lugar de una dependencia extra.
-8. **Agregación en memoria** en lugar de `date_trunc` nativo: es portable, testeable y el
-   rango está acotado por `vitialert.aggregation.max-range-days`.
-9. **Timestamp del backend.** El ESP32 todavía no envía su propio timestamp; cuando lo
-   haga se agrega una columna `timestamp_sensor` sin romper el contrato.
-10. **Sin dirección de viento, sin granizo, sin Random Forest heredado.** No hay ninguna
-    referencia funcional a esas variables.
-
----
-
-## 16. Pendientes explícitos para la siguiente etapa
-
-1. Servicio Python de inferencia (`POST /predict`) y activación de `vitialert.ml.enabled`.
-   El contrato ya está definido en `PredictionRequest` / `PredictionResponse`.
-2. Integrar las variables satelitales al dataset exportado (hoy `SatelliteClient` consulta
-   pero no persiste): falta la tabla `satellite_observation` y su columna en el CSV.
-3. Persistir la meteorología por nodo/coordenada cuando haya más de una finca.
-4. Reglas propias del backend (`BACKEND_RULES`) como escalón intermedio entre el fallback
-   local y el modelo.
-5. Endpoint de control manual (`MANUAL`) para forzar apertura o cierre desde una UI.
-6. Cierre automático de eventos de riego que quedan `OPEN` porque el nodo se cayó con la
-   válvula abierta (hoy quedan abiertos hasta que el nodo reporta el cierre).
-7. `timestamp_sensor` enviado por el firmware, para separar el momento de la medición del
-   momento de la recepción.
-8. Autenticación real de los endpoints administrativos si el sistema sale del laboratorio.
-9. Materializar la serie horaria en una tabla si el volumen de datos hace lenta la
-   agregación en memoria.
+1. Conectar el modelo Python (`ML_ENABLED=true`) y reintroducir `decision_record` para
+   comparar decisión local, decisión del modelo y decisión final.
+2. Agregar las columnas satelitales al dataset (hoy VitiAI se consulta pero no se persiste).
+3. Cerrar automáticamente los riegos que quedan abiertos si el nodo se cae con la válvula
+   abierta.
+4. `timestamp_sensor` enviado por el firmware, para separar el momento de la medición del de
+   la recepción.

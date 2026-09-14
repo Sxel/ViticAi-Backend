@@ -6,12 +6,9 @@ spring:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/vitialert}
     username: ${DB_USERNAME:vitialert}
     password: ${DB_PASSWORD:vitialert}
-    hikari:
-      pool-name: vitialert-pool
-      maximum-pool-size: 10
 
   jpa:
-    # Flyway es la unica fuente de verdad del esquema. Hibernate no genera ni modifica DDL.
+    # Flyway es la unica fuente de verdad del esquema: Hibernate no genera ni modifica DDL.
     hibernate:
       ddl-auto: none
     open-in-view: false
@@ -19,7 +16,6 @@ spring:
       hibernate:
         jdbc:
           time_zone: UTC
-          batch_size: 25
 
   flyway:
     enabled: true
@@ -31,74 +27,44 @@ spring:
       max-file-size: 25MB
       max-request-size: 25MB
 
-  jackson:
-    # Los nulls se serializan de forma explicita: un dato faltante debe verse como faltante.
-    default-property-inclusion: always
-
 server:
   port: ${SERVER_PORT:8080}
 
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
-    operations-sorter: method
-  api-docs:
-    path: /v3/api-docs
 
 vitialert:
+
   node:
-    # Alta automatica de nodos desconocidos: permite apuntar la maqueta actual sin configurar nada.
+    # Da de alta un nodo desconocido en su primer POST: el ESP32 funciona cambiando solo la URL.
     auto-register: true
-    offline-after-minutes: ${NODE_OFFLINE_AFTER_MINUTES:10}
 
   quality:
+    # Caudal por debajo del cual se considera "sin flujo" (ruido del caudalimetro de efecto Hall).
     flow-noise-threshold-l-min: 0.2
-    frozen-sensor-enabled: true
-    frozen-sensor-minutes: 60
-    plausible-temp-min-c: -20.0
-    plausible-temp-max-c: 55.0
-    plausible-wind-max-kmh: 120.0
-    adc-min: 0
-    adc-max: 4095
 
-  features:
-    max-lag-tolerance-minutes: 30
-
-  aggregation:
+  dataset:
+    # Hueco maximo entre lecturas que se acepta al integrar el tiempo de valvula abierta.
     max-gap-seconds: 120
     max-range-days: 31
 
-  # --- Integraciones externas (todas opcionales y desactivadas por defecto) ---
+  # VitiAI satelital: se consulta por coordenadas del nodo, no por identificador.
   satellite:
     enabled: ${SATELLITE_ENABLED:false}
     base-url: ${SATELLITE_BASE_URL:http://localhost:8000}
-    latest-path: /api/satellite/latest
-    connect-timeout-ms: 2000
-    read-timeout-ms: 3000
+    features-path: /api/v1/satellite/features
+    buffer-km: 5.0
+    timeout-ms: 3000
 
-  weather:
-    enabled: ${WEATHER_PULL_ENABLED:false}
-    base-url: ${WEATHER_BASE_URL:http://localhost:8001}
-    daily-path: /api/weather/daily
-    connect-timeout-ms: 2000
-    read-timeout-ms: 5000
-    default-source: OPEN_METEO_ERA5
-    preferred-source: OPEN_METEO_ERA5
-
+  # API Python de inferencia. Apagada: la valvula sigue gobernada por decision_riego_local.
   ml:
     enabled: ${ML_ENABLED:false}
     base-url: ${ML_BASE_URL:http://localhost:8002}
     predict-path: /predict
-    connect-timeout-ms: 1000
-    read-timeout-ms: 1500
-
-  security:
-    node-key-enabled: ${NODE_KEY_ENABLED:false}
-    admin-key-enabled: ${ADMIN_KEY_ENABLED:false}
-    admin-key: ${ADMIN_KEY:}
+    timeout-ms: 1500
 
 logging:
   level:
     root: INFO
     com.vitialert.backend: INFO
-    org.hibernate.SQL: WARN

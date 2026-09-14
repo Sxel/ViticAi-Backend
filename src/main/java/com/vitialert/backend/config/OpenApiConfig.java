@@ -1,9 +1,7 @@
 package com.vitialert.backend.config;
 
 import io.swagger.v3.oas.models.OpenAPI;
-import io.swagger.v3.oas.models.info.Contact;
 import io.swagger.v3.oas.models.info.Info;
-import io.swagger.v3.oas.models.info.License;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -14,20 +12,17 @@ public class OpenApiConfig {
     public OpenAPI vitiAlertOpenApi() {
         return new OpenAPI().info(new Info()
                 .title("VitiAlert / Vitic-AI - Backend")
-                .version("0.1.0")
+                .version("0.2.0")
                 .description("""
-                        Backend orquestador del sistema de soporte de decisiones para gestion hidrica
-                        en vitivinicultura.
+                        Recibe los datos del ESP32, los guarda, reconstruye los eventos de riego,
+                        integra la meteorologia del Data Miner y el contexto satelital de VitiAI,
+                        construye el dataset horario y, mas adelante, consulta el modelo de
+                        Ciencia de Datos.
 
-                        Responsabilidades: recibir y validar la telemetria del ESP32, persistirla de forma
-                        inmutable, reconstruir los eventos de riego, construir features temporales por
-                        timestamp real, integrar meteorologia y datos satelitales, consultar la inferencia
-                        del modelo Python y devolver la decision de riego al nodo.
+                        Mientras el modelo esta apagado, la valvula sigue gobernada por
+                        decision_riego_local del propio ESP32.
 
-                        Mientras no exista un motor de decision avanzado habilitado, la valvula sigue
-                        gobernada por decision_riego_local del propio ESP32.
-                        """)
-                .contact(new Contact().name("Tesis - Licenciatura en Analisis de Datos"))
-                .license(new License().name("Uso academico")));
+                        La autenticacion esta fuera del alcance de este prototipo academico.
+                        """));
     }
 }
