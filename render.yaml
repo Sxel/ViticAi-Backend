@@ -1,0 +1,45 @@
+databases:
+  - name: vitialert-db
+    plan: free
+    databaseName: vitialert
+    user: vitialert
+
+services:
+  - type: web
+    name: vitialert-backend
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: DB_HOST
+        fromDatabase:
+          name: vitialert-db
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: vitialert-db
+          property: port
+      - key: DB_NAME
+        fromDatabase:
+          name: vitialert-db
+          property: database
+      - key: DB_USERNAME
+        fromDatabase:
+          name: vitialert-db
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: vitialert-db
+          property: password
+      - key: API_KEY
+        generateValue: true
+      - key: NODE_DEFAULT_LATITUDE
+        value: "-31.6550"
+      - key: NODE_DEFAULT_LONGITUDE
+        value: "-68.5750"
+      - key: SATELLITE_ENABLED
+        value: "true"
+      - key: SATELLITE_BASE_URL
+        value: https://viti-alert-ds-api.onrender.com
+      - key: ML_ENABLED
+        value: "false"

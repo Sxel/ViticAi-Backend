@@ -51,7 +51,7 @@ Cada pieza tiene una sola responsabilidad:
 2. Java los valida y los guarda.
 3. Java reconstruye los eventos de riego.
 4. El histórico meteorológico se importa desde el Data Miner.
-5. VitiAI puede consultarse para obtener contexto satelital.
+5. VitiAI se consulta y sus capturas GOES/Sentinel se persisten.
 6. Java genera una serie horaria.
 7. Java exporta un dataset.
 8. Python entrena el modelo.
@@ -132,6 +132,8 @@ mvn spring-boot:run     # arranca
 | `DB_URL` | `jdbc:postgresql://localhost:5432/vitialert` |
 | `DB_USERNAME` / `DB_PASSWORD` | `vitialert` / `vitialert` |
 | `SERVER_PORT` | `8080` |
+| `API_KEY` | vacía (definir obligatoriamente al publicar) |
+| `NODE_DEFAULT_LATITUDE` / `NODE_DEFAULT_LONGITUDE` | Pocito, San Juan |
 | `SATELLITE_ENABLED` / `SATELLITE_BASE_URL` | `false` / `http://localhost:8000` |
 | `ML_ENABLED` / `ML_BASE_URL` | `false` / `http://localhost:8002` |
 
@@ -139,7 +141,7 @@ Swagger: <http://localhost:8080/swagger-ui.html>
 
 ---
 
-## Endpoints (10)
+## Endpoints (11)
 
 | Método | Ruta | Qué hace |
 |---|---|---|
@@ -150,6 +152,7 @@ Swagger: <http://localhost:8080/swagger-ui.html>
 | GET | `/api/nodes/{id}/irrigation-events` | Riegos reconstruidos |
 | GET | `/api/nodes/{id}/features` | Vector de features de una hora (`at`) |
 | GET | `/api/nodes/{id}/satellite` | Contexto satelital de VitiAI |
+| POST | `/api/satellite/refresh` | Consulta y persiste satélite para todos los nodos ubicados |
 | POST | `/api/weather/import` | Importa el CSV del Data Miner (`file`, `source`) |
 | GET | `/api/dataset/export` | Dataset horario en CSV (`nodeId`, `from`, `to`) |
 | GET | `/health` | Estado del backend y sus integraciones |
@@ -159,6 +162,7 @@ Todo el backend trabaja en **UTC**.
 
 ```bash
 curl -X POST http://localhost:8080/api/weather/import \
+  -H "X-API-Key: $VITIALERT_API_KEY" \
   -F "file=@dataset_meteorologico.csv" -F "source=OPEN_METEO_ERA5"
 
 curl "http://localhost:8080/api/dataset/export?nodeId=1&from=2026-08-01&to=2026-09-01" -o dataset.csv
@@ -190,6 +194,7 @@ config/      2   VitiAlertProperties · OpenApiConfig
 | `telemetry_reading` | Una fila **inmutable** por POST. Nunca se sobrescribe |
 | `irrigation_event` | Período real de riego, derivado de las transiciones de la válvula |
 | `weather_observation` | Meteorología diaria del Data Miner (fuente separada de la telemetría) |
+| `satellite_observation` | Capturas GOES/Sentinel con sus tiempos de observación propios |
 
 ---
 
@@ -240,6 +245,8 @@ soil_moisture_slope_3h, soil_moisture_slope_12h, soil_moisture_mean_24h,
 temperature_c, relative_humidity_pct, wind_speed_kmh, flow_l_min,
 irrigation_volume_1h, irrigation_volume_24h,
 precipitation_mm, et0_mm, vpd_kpa, solar_radiation,
+cloud_top_temperature_c, cloud_temperature_delta_c, cloud_fraction,
+rainfall_rate_mm_h, ndvi_mean, ndmi_mean,
 sample_count, soil_moisture_t_plus_24h
 ```
 
@@ -275,17 +282,21 @@ el preprocesamiento del dataset en Python, con `diff()`.
 
 ## Seguridad
 
-**La autenticación está fuera del alcance del prototipo actual.** El sistema corre en
-ambiente de laboratorio, sin datos personales y sin exposición pública. No hay Spring
-Security, ni claves por nodo, ni filtros propios. Si el sistema saliera del laboratorio,
-haría falta HTTPS y autenticación real.
+En producción, `API_KEY` protege todos los endpoints POST mediante `X-API-Key`; los GET de
+consulta permanecen públicos. Render aporta HTTPS. En laboratorio puede dejarse vacía para
+mantener compatibilidad con el firmware actual.
+
+## Despliegue en Render
+
+El repositorio incluye `Dockerfile` y `render.yaml`. Crear un Blueprint desde el repositorio
+levanta el backend y PostgreSQL; Flyway aplica las migraciones. Copiar la clave generada
+`API_KEY` al cron del Data Miner como `VITIALERT_API_KEY`.
 
 ## Pendientes
 
 1. Conectar el modelo Python (`ML_ENABLED=true`) y reintroducir `decision_record` para
    comparar decisión local, decisión del modelo y decisión final.
-2. Agregar las columnas satelitales al dataset (hoy VitiAI se consulta pero no se persiste).
-3. Cerrar automáticamente los riegos que quedan abiertos si el nodo se cae con la válvula
+2. Cerrar automáticamente los riegos que quedan abiertos si el nodo se cae con la válvula
    abierta.
-4. `timestamp_sensor` enviado por el firmware, para separar el momento de la medición del de
+3. `timestamp_sensor` enviado por el firmware, para separar el momento de la medición del de
    la recepción.

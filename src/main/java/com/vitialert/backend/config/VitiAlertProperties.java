@@ -12,6 +12,7 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 @ConfigurationProperties(prefix = "vitialert")
 public record VitiAlertProperties(
         @DefaultValue Node node,
+        @DefaultValue Security security,
         @DefaultValue Quality quality,
         @DefaultValue Dataset dataset,
         @DefaultValue Satellite satellite,
@@ -22,7 +23,14 @@ public record VitiAlertProperties(
      * @param autoRegister da de alta un nodo desconocido en su primer POST, de modo que el
      *                     ESP32 funcione cambiando solo la URL del servidor
      */
-    public record Node(@DefaultValue("true") boolean autoRegister) {
+    public record Node(
+            @DefaultValue("true") boolean autoRegister,
+            @DefaultValue("-31.6550") double defaultLatitude,
+            @DefaultValue("-68.5750") double defaultLongitude) {
+    }
+
+    /** Clave compartida para endpoints de escritura; vacia mantiene el modo laboratorio. */
+    public record Security(@DefaultValue("") String apiKey) {
     }
 
     /**

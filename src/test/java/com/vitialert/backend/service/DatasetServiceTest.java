@@ -3,10 +3,13 @@ package com.vitialert.backend.service;
 import com.vitialert.backend.TestSupport;
 import com.vitialert.backend.domain.Node;
 import com.vitialert.backend.domain.WeatherObservation;
+import com.vitialert.backend.domain.SatelliteObservation;
 import com.vitialert.backend.dto.FeatureVector;
+import com.vitialert.backend.dto.SatelliteFeaturesDto;
 import com.vitialert.backend.repository.NodeRepository;
 import com.vitialert.backend.repository.TelemetryReadingRepository;
 import com.vitialert.backend.repository.WeatherObservationRepository;
+import com.vitialert.backend.repository.SatelliteObservationRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -51,6 +54,9 @@ class DatasetServiceTest {
 
     @Autowired
     private NodeRepository nodeRepository;
+
+    @Autowired
+    private SatelliteObservationRepository satelliteObservationRepository;
 
     /** 30 horas continuas, una lectura cada 5 minutos: 12 muestras por bucket horario. */
     private Node buildSeries(String externalId) {
@@ -157,6 +163,34 @@ class DatasetServiceTest {
         Map<String, String> secondDay = rows.get(START.plus(Duration.ofHours(26)).toString());
         assertThat(secondDay.get("precipitation_mm")).isEmpty();
         assertThat(secondDay.get("et0_mm")).isEmpty();
+    }
+
+    @Test
+    void incorporaGoesYSentinelPersistidosSinInventarHistorico() {
+        Node node = buildSeries("ds-satellite");
+        SatelliteFeaturesDto dto = new SatelliteFeaturesDto(
+                START.plus(Duration.ofHours(5).plusMinutes(40)),
+                new SatelliteFeaturesDto.Goes(
+                        START.plus(Duration.ofHours(5).plusMinutes(30)), -48.2, -3.1, 0.72, 1.4),
+                new SatelliteFeaturesDto.Sentinel(LocalDate.of(2026, 8, 28), 0.51, 0.18),
+                "good");
+        satelliteObservationRepository.save(SatelliteObservation.from(node, dto));
+
+        Map<String, Map<String, String>> rows =
+                parse(datasetService.exportCsv(node, START, START.plus(Duration.ofHours(HOURS))));
+
+        Map<String, String> hour5 = rows.get(START.plus(Duration.ofHours(5)).toString());
+        assertThat(hour5.get("cloud_top_temperature_c")).isEqualTo("-48.2");
+        assertThat(hour5.get("cloud_temperature_delta_c")).isEqualTo("-3.1");
+        assertThat(hour5.get("cloud_fraction")).isEqualTo("0.72");
+        assertThat(hour5.get("rainfall_rate_mm_h")).isEqualTo("1.4");
+        assertThat(hour5.get("ndvi_mean")).isEqualTo("0.51");
+        assertThat(hour5.get("ndmi_mean")).isEqualTo("0.18");
+
+        // GOES no se arrastra fuera de su ventana de 2 h; Sentinel si conserva su fecha real.
+        Map<String, String> hour10 = rows.get(START.plus(Duration.ofHours(10)).toString());
+        assertThat(hour10.get("cloud_fraction")).isEmpty();
+        assertThat(hour10.get("ndvi_mean")).isEqualTo("0.51");
     }
 
     @Test

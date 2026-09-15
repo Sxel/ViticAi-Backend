@@ -143,6 +143,8 @@ public class TelemetryService {
             Node node = new Node(externalId);
             node.setNombre("Nodo " + externalId);
             node.setDescripcion("Alta automatica en la primera recepcion de telemetria.");
+            node.setLatitud(properties.node().defaultLatitude());
+            node.setLongitud(properties.node().defaultLongitude());
             Node saved = nodeRepository.save(node);
             log.info("Nodo dado de alta automaticamente: {}", externalId);
             return saved;

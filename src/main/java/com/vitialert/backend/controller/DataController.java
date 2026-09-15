@@ -5,6 +5,7 @@ import com.vitialert.backend.client.SatelliteClient;
 import com.vitialert.backend.domain.Node;
 import com.vitialert.backend.dto.WeatherImportResultDto;
 import com.vitialert.backend.service.DatasetService;
+import com.vitialert.backend.service.SatelliteObservationService;
 import com.vitialert.backend.service.TelemetryService;
 import com.vitialert.backend.service.WeatherService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -34,17 +35,20 @@ public class DataController {
     private final TelemetryService telemetryService;
     private final SatelliteClient satelliteClient;
     private final PredictionClient predictionClient;
+    private final SatelliteObservationService satelliteObservationService;
 
     public DataController(WeatherService weatherService,
                           DatasetService datasetService,
                           TelemetryService telemetryService,
                           SatelliteClient satelliteClient,
-                          PredictionClient predictionClient) {
+                          PredictionClient predictionClient,
+                          SatelliteObservationService satelliteObservationService) {
         this.weatherService = weatherService;
         this.datasetService = datasetService;
         this.telemetryService = telemetryService;
         this.satelliteClient = satelliteClient;
         this.predictionClient = predictionClient;
+        this.satelliteObservationService = satelliteObservationService;
     }
 
     @Operation(summary = "Importa el CSV diario del Data Miner",
@@ -58,6 +62,12 @@ public class DataController {
             throw new IllegalArgumentException("Se requiere un archivo CSV en el campo 'file'.");
         }
         return weatherService.importCsv(file.getInputStream(), source);
+    }
+
+    @Operation(summary = "Consulta VitiAI y persiste una captura por nodo con coordenadas")
+    @PostMapping("/api/satellite/refresh")
+    public Map<String, Object> refreshSatellite() {
+        return satelliteObservationService.refreshAll();
     }
 
     @Operation(summary = "Exporta el dataset horario en CSV",

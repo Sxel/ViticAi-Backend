@@ -55,6 +55,13 @@ public record FeatureVector(
         @JsonProperty("vpd_kpa") Double vpdKpa,
         @JsonProperty("solar_radiation") Double solarRadiation,
 
+        @JsonProperty("cloud_top_temperature_c") Double cloudTopTemperatureC,
+        @JsonProperty("cloud_temperature_delta_c") Double cloudTemperatureDeltaC,
+        @JsonProperty("cloud_fraction") Double cloudFraction,
+        @JsonProperty("rainfall_rate_mm_h") Double rainfallRateMmH,
+        @JsonProperty("ndvi_mean") Double ndviMean,
+        @JsonProperty("ndmi_mean") Double ndmiMean,
+
         /** Lecturas que componen el bucket horario. Permite descartar horas con poca cobertura. */
         @JsonProperty("sample_count") Integer sampleCount,
 
@@ -73,6 +80,8 @@ public record FeatureVector(
                 "temperature_c", "relative_humidity_pct", "wind_speed_kmh", "flow_l_min",
                 "irrigation_volume_1h", "irrigation_volume_24h",
                 "precipitation_mm", "et0_mm", "vpd_kpa", "solar_radiation",
+                "cloud_top_temperature_c", "cloud_temperature_delta_c", "cloud_fraction",
+                "rainfall_rate_mm_h", "ndvi_mean", "ndmi_mean",
                 "sample_count", "soil_moisture_t_plus_24h");
     }
 
@@ -99,6 +108,12 @@ public record FeatureVector(
         values.add(et0Mm);
         values.add(vpdKpa);
         values.add(solarRadiation);
+        values.add(cloudTopTemperatureC);
+        values.add(cloudTemperatureDeltaC);
+        values.add(cloudFraction);
+        values.add(rainfallRateMmH);
+        values.add(ndviMean);
+        values.add(ndmiMean);
         values.add(sampleCount);
         values.add(soilMoistureTPlus24h);
         return values;

@@ -1,9 +1,11 @@
 package com.vitialert.backend.service;
 
 import com.vitialert.backend.domain.Node;
+import com.vitialert.backend.domain.SatelliteObservation;
 import com.vitialert.backend.domain.WeatherObservation;
 import com.vitialert.backend.dto.FeatureVector;
 import com.vitialert.backend.repository.WeatherObservationRepository;
+import com.vitialert.backend.repository.SatelliteObservationRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -52,11 +54,14 @@ public class DatasetService {
 
     private final AggregationService aggregationService;
     private final WeatherObservationRepository weatherObservationRepository;
+    private final SatelliteObservationRepository satelliteObservationRepository;
 
     public DatasetService(AggregationService aggregationService,
-                          WeatherObservationRepository weatherObservationRepository) {
+                          WeatherObservationRepository weatherObservationRepository,
+                          SatelliteObservationRepository satelliteObservationRepository) {
         this.aggregationService = aggregationService;
         this.weatherObservationRepository = weatherObservationRepository;
+        this.satelliteObservationRepository = satelliteObservationRepository;
     }
 
     /**
@@ -76,6 +81,7 @@ public class DatasetService {
         Map<Instant, HourlyPoint> series =
                 aggregationService.hourlySeries(node.getId(), first.minus(DAY), to.plus(DAY));
         Map<LocalDate, WeatherObservation> weather = loadWeather(first.minus(DAY), to.plus(DAY));
+        List<SatelliteObservation> satellite = loadSatellite(node.getId(), first.minus(DAY), to.plus(DAY));
 
         StringBuilder csv = new StringBuilder();
         csv.append(String.join(",", FeatureVector.csvHeader())).append('\n');
@@ -85,7 +91,7 @@ public class DatasetService {
             if (hour.isBefore(first) || !hour.isBefore(to)) {
                 continue;
             }
-            csv.append(toCsvLine(buildRow(node, hour, series, weather))).append('\n');
+            csv.append(toCsvLine(buildRow(node, hour, series, weather, satellite))).append('\n');
             rows++;
         }
 
@@ -106,7 +112,8 @@ public class DatasetService {
         Map<Instant, HourlyPoint> series =
                 aggregationService.hourlySeries(node.getId(), hour.minus(DAY), hour.plus(DAY).plus(Duration.ofHours(1)));
         Map<LocalDate, WeatherObservation> weather = loadWeather(hour.minus(DAY), hour.plus(DAY));
-        return buildRow(node, hour, series, weather);
+        List<SatelliteObservation> satellite = loadSatellite(node.getId(), hour.minus(DAY), hour.plus(DAY));
+        return buildRow(node, hour, series, weather, satellite);
     }
 
     // ------------------------------------------------------------------ features
@@ -114,7 +121,8 @@ public class DatasetService {
     private FeatureVector buildRow(Node node,
                                    Instant hour,
                                    Map<Instant, HourlyPoint> series,
-                                   Map<LocalDate, WeatherObservation> weather) {
+                                   Map<LocalDate, WeatherObservation> weather,
+                                   List<SatelliteObservation> satellite) {
 
         HourlyPoint point = series.get(hour);
 
@@ -126,6 +134,7 @@ public class DatasetService {
         Double lag24h = soilAt(series, hour.minus(DAY));
 
         WeatherObservation observation = weather.get(hour.atZone(ZoneOffset.UTC).toLocalDate());
+        SatelliteValues satelliteValues = satelliteAt(satellite, hour);
 
         return new FeatureVector(
                 hour,
@@ -148,6 +157,12 @@ public class DatasetService {
                 observation == null ? null : observation.getEt0Mm(),
                 observation == null ? null : observation.getVpdMaxKpa(),
                 observation == null ? null : observation.getSolarRadiationMjM2(),
+                satelliteValues.cloudTopTemperatureC(),
+                satelliteValues.cloudTemperatureDeltaC(),
+                satelliteValues.cloudFraction(),
+                satelliteValues.rainfallRateMmH(),
+                satelliteValues.ndviMean(),
+                satelliteValues.ndmiMean(),
                 point == null ? null : point.sampleCount(),
                 soilAt(series, hour.plus(DAY)));
     }
@@ -216,6 +231,48 @@ public class DatasetService {
         }
         return byDate;
     }
+
+    private List<SatelliteObservation> loadSatellite(Long nodeId, Instant from, Instant to) {
+        return satelliteObservationRepository
+                .findByNodeIdAndRetrievedAtBetweenOrderByRetrievedAtAsc(
+                        nodeId, from.minus(Duration.ofDays(35)), to.plus(Duration.ofHours(2)));
+    }
+
+    /** GOES caduca a las 2 h; Sentinel se conserva hasta 30 dias o una imagen mas nueva. */
+    private static SatelliteValues satelliteAt(List<SatelliteObservation> observations, Instant hour) {
+        SatelliteObservation goes = null;
+        SatelliteObservation sentinel = null;
+        Instant bucketEnd = hour.plus(Duration.ofHours(1));
+        LocalDate day = hour.atZone(ZoneOffset.UTC).toLocalDate();
+        for (SatelliteObservation candidate : observations) {
+            Instant goesTime = candidate.getGoesObservationTime();
+            if (goesTime != null && !goesTime.isAfter(bucketEnd)
+                    && !goesTime.isBefore(hour.minus(Duration.ofHours(2)))
+                    && (goes == null || goesTime.isAfter(goes.getGoesObservationTime()))) {
+                goes = candidate;
+            }
+            LocalDate imageDate = candidate.getSentinelImageDate();
+            if (imageDate != null && !imageDate.isAfter(day)
+                    && !imageDate.isBefore(day.minusDays(30))
+                    && (sentinel == null || imageDate.isAfter(sentinel.getSentinelImageDate()))) {
+                sentinel = candidate;
+            }
+        }
+        return new SatelliteValues(
+                goes == null ? null : goes.getCloudTopTemperatureC(),
+                goes == null ? null : goes.getCloudTemperatureDeltaC(),
+                goes == null ? null : goes.getCloudFraction(),
+                goes == null ? null : goes.getRainfallRateMmH(),
+                sentinel == null ? null : sentinel.getNdviMean(),
+                sentinel == null ? null : sentinel.getNdmiMean());
+    }
+
+    private record SatelliteValues(Double cloudTopTemperatureC,
+                                   Double cloudTemperatureDeltaC,
+                                   Double cloudFraction,
+                                   Double rainfallRateMmH,
+                                   Double ndviMean,
+                                   Double ndmiMean) { }
 
     // ------------------------------------------------------------------ CSV
 

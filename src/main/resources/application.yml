@@ -3,7 +3,7 @@ spring:
     name: vitialert-backend
 
   datasource:
-    url: ${DB_URL:jdbc:postgresql://localhost:5432/vitialert}
+    url: ${DB_URL:jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:vitialert}}
     username: ${DB_USERNAME:vitialert}
     password: ${DB_PASSWORD:vitialert}
 
@@ -39,6 +39,12 @@ vitialert:
   node:
     # Da de alta un nodo desconocido en su primer POST: el ESP32 funciona cambiando solo la URL.
     auto-register: true
+    default-latitude: ${NODE_DEFAULT_LATITUDE:-31.6550}
+    default-longitude: ${NODE_DEFAULT_LONGITUDE:-68.5750}
+
+  security:
+    # En produccion definir API_KEY. Vacio conserva compatibilidad con el laboratorio.
+    api-key: ${API_KEY:}
 
   quality:
     # Caudal por debajo del cual se considera "sin flujo" (ruido del caudalimetro de efecto Hall).
