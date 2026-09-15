@@ -3,6 +3,7 @@ package com.vitialert.backend.repository;
 import com.vitialert.backend.domain.TelemetryReading;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -16,7 +17,14 @@ import java.util.List;
  */
 public interface TelemetryReadingRepository extends JpaRepository<TelemetryReading, Long> {
 
-    /** Ultimas lecturas del nodo. Usar con {@code PageRequest.of(0, 1)} para la mas reciente. */
+    /**
+     * Ultimas lecturas del nodo. Usar con {@code PageRequest.of(0, 1)} para la mas reciente.
+     *
+     * <p>El {@code @EntityGraph} trae el nodo en la misma consulta. Sin el, mapear la lectura a
+     * DTO fuera de la transaccion lanza LazyInitializationException ({@code open-in-view: false}
+     * y {@code node} es LAZY), y mapear dentro de la transaccion dispararia un SELECT por fila.</p>
+     */
+    @EntityGraph(attributePaths = "node")
     @Query("""
             select t from TelemetryReading t
             where t.node.id = :nodeId
@@ -25,6 +33,7 @@ public interface TelemetryReadingRepository extends JpaRepository<TelemetryReadi
     List<TelemetryReading> findLatest(@Param("nodeId") Long nodeId, Pageable pageable);
 
     /** Historico paginado, del mas reciente al mas antiguo. */
+    @EntityGraph(attributePaths = "node")
     @Query(value = """
             select t from TelemetryReading t
             where t.node.id = :nodeId

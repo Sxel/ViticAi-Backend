@@ -114,7 +114,7 @@ GRANT ALL PRIVILEGES ON DATABASE vitialert TO vitialert;
 Flyway crea y migra el esquema solo en el arranque.
 
 ```bash
-mvn clean verify        # compila y corre los 23 tests (H2 en memoria, sin Docker)
+mvn clean verify        # compila y corre los 26 tests (H2 en memoria, sin Docker)
 mvn spring-boot:run     # arranca
 ```
 
@@ -212,6 +212,18 @@ Nunca se rellena con cero. Un `0` en `soil_moisture_lag_24h` significa "hace 24 
 suelo estaba completamente seco" — un valor válido del dominio que el modelo interpretaría
 como tal. Con celda vacía, pandas lo lee como `NaN`, `df.isna().sum()` lo muestra, y la
 decisión de imputar se toma explícitamente en el análisis.
+
+### Las consultas traen el nodo en la misma query
+
+Las entidades usan `FetchType.LAZY` para `node` y el backend corre con `open-in-view: false`.
+Sin precauciones, mapear una lectura a DTO en el controller —ya fuera de la transacción— lanza
+`LazyInitializationException`. Las tres consultas cuyo resultado se serializa llevan
+`@EntityGraph(attributePaths = "node")`, que trae el nodo con un join en la misma consulta:
+además de evitar el error, evita el N+1 que produciría mapear dentro de la transacción.
+
+`NodeQueriesTest` es la única clase de test **sin** `@Transactional`, justamente para ejercitar
+los endpoints con la sesión cerrada. Con `@Transactional` la sesión queda abierta y el problema
+no se ve.
 
 ### Una sola implementación de features
 

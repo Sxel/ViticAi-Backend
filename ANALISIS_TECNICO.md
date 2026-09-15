@@ -4,7 +4,7 @@ Complemento del README: el README explica **cómo se usa** el backend, este docu
 **por qué está hecho así**. Pensado para la defensa de tesis y para retomar el trabajo dentro
 de unos meses.
 
-Versión 0.2.0 — 40 clases, ~3.300 líneas, 9 endpoints, 4 tablas, 23 tests.
+Versión 0.2.0 — 40 clases, ~3.300 líneas, 9 endpoints, 4 tablas, 26 tests.
 `mvn clean verify` verificado en verde: **23/23 tests, BUILD SUCCESS** (14-09-2026, 29 s).
 
 ---
@@ -178,6 +178,7 @@ test, no que la excepción real de conexión se captura donde debe.
 | Sin interfaces de una implementación | No desacoplan nada y Mockito ya no las necesita |
 | Alta automática de nodos | Hace real el criterio "apuntar la maqueta cambiando solo la URL"; en la duda, se guarda el dato |
 | Sin seguridad | Ambiente de laboratorio, sin datos personales. Declarado, no olvidado |
+| `@EntityGraph(attributePaths = "node")` en las consultas que se serializan | Con `open-in-view: false` y `node` LAZY, mapear a DTO fuera de la transacción lanza `LazyInitializationException`; el graph lo trae con un join y de paso evita el N+1 |
 
 ---
 
@@ -211,7 +212,7 @@ perdería la información de que hubo un riego, y marcarlo deja que el análisis
 
 ## 5. Riesgos conocidos
 
-La suite se ejecutó completa contra H2: 23 tests en 6 clases, sin fallos ni errores.
+La suite se ejecutó completa contra H2: 26 tests en 7 clases, sin fallos ni errores.
 
 | # | Riesgo | Mitigación / estado |
 |---|---|---|
@@ -223,6 +224,7 @@ La suite se ejecutó completa contra H2: 23 tests en 6 clases, sin fallos ni err
 | R6 | Sin autenticación | **Aceptado y declarado**: ambiente de laboratorio |
 | R7 | Solo granularidad horaria | Es la que usa la tesis; ampliar es cambiar una constante |
 | R8 | VitiAI se consulta pero no se persiste | El punto de integración está probado; faltan las columnas en el dataset |
+| R9 | Los tests con `@Transactional` mantienen la sesión abierta y ocultan problemas de carga perezosa | `NodeQueriesTest` corre sin `@Transactional` y cubre los tres endpoints que serializan entidades |
 
 ---
 
