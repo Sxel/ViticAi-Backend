@@ -139,7 +139,7 @@ Swagger: <http://localhost:8080/swagger-ui.html>
 
 ---
 
-## Endpoints (9)
+## Endpoints (10)
 
 | Método | Ruta | Qué hace |
 |---|---|---|
@@ -180,7 +180,7 @@ exception/   3   Manejo uniforme de errores
 config/      2   VitiAlertProperties · OpenApiConfig
 ```
 
-40 clases, ~3.300 líneas.
+40 clases de producción, 3.284 líneas. 7 clases de test, 26 casos.
 
 ## Modelo de datos
 

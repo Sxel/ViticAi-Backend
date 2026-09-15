@@ -4,8 +4,8 @@ Complemento del README: el README explica **cómo se usa** el backend, este docu
 **por qué está hecho así**. Pensado para la defensa de tesis y para retomar el trabajo dentro
 de unos meses.
 
-Versión 0.2.0 — 40 clases, ~3.300 líneas, 9 endpoints, 4 tablas, 26 tests.
-`mvn clean verify` verificado en verde: **23/23 tests, BUILD SUCCESS** (14-09-2026, 29 s).
+Versión 0.2.0 — 40 clases, 3.284 líneas, 10 endpoints, 4 tablas, 26 tests en 7 clases.
+`mvn clean verify` verificado en verde: **26/26 tests, BUILD SUCCESS** (14-09-2026, 17 s).
 
 ---
 

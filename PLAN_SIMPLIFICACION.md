@@ -1,6 +1,10 @@
 # Plan de simplificación — VitiAlert backend
 
-**Estado:** propuesta para revisión. **No se modificó ningún archivo todavía.**
+**Estado: EJECUTADO** — commits `7e95bcd` (refactor) y `6845aa8` (fix de carga perezosa),
+integrados con `origin/main` en el merge `943bf3f`. `mvn clean verify` en verde: 26/26 tests.
+
+> Este documento se conserva como registro del plan tal como se aprobó. La sección 10 al final
+> anota en qué se desvió la ejecución de lo planificado.
 
 Base analizada: 71 clases de producción (4.584 LOC), 9 clases de test (1.091 LOC),
 14 endpoints, 5 entidades, 1 migración.
@@ -11,11 +15,11 @@ Base analizada: 71 clases de producción (4.584 LOC), 9 clases de test (1.091 LO
 
 | | Antes | Después | Δ |
 |---|---|---|---|
-| Clases de producción | 71 | **39** | −45 % |
-| LOC de producción | 4.584 | **~3.000** | −35 % |
-| Clases de test | 9 | **6** | −33 % |
-| Casos de test | 35 | **~25** | −29 % |
-| Endpoints | 14 | **9** | −36 % |
+| Clases de producción | 71 | **40** | −44 % |
+| LOC de producción | 4.584 | **3.284** | −28 % |
+| Clases de test | 9 | **7** | −22 % |
+| Casos de test | 35 | **26** | −26 % |
+| Endpoints | 14 | **10** | −29 % |
 | Entidades / tablas | 5 | **4** | −20 % |
 | Clases de configuración | 12 | **2** | −83 % |
 | Consultas en el `POST /api/data` | 3 + 2 escrituras | **2 + 1 escritura** | −40 % |
@@ -33,7 +37,7 @@ vuelve en una etapa posterior.
 | Clase | LOC | Acción | Motivo |
 |---|---|---|---|
 | `TelemetryController` | 40 | **KEEP** | Contrato con el ESP32. Intocable |
-| `NodeController` | 196 | **SIMPLIFY** | De 10 endpoints a 5. Quedan: lista, telemetría última, telemetría paginada, eventos de riego, features |
+| `NodeController` | 196 | **SIMPLIFY** | De 10 endpoints a 5 (quedaron 6: se sumó `/satellite`, ver 10.3). Lista, telemetría última, telemetría paginada, eventos de riego, features |
 | `AdminDatasetController` | 58 | **MERGE** → `DataController` | El prefijo `/api/admin` existía para el filtro de seguridad, que se elimina |
 | `AdminWeatherController` | 45 | **MERGE** → `DataController` | Ídem |
 | `HealthController` | 48 | **MERGE** → `DataController` | Queda como un método de 12 líneas en `/health` |
@@ -165,7 +169,7 @@ que deja de ser un DTO de API porque el endpoint `/aggregations` se elimina.
 
 ---
 
-## 3. Estructura final propuesta (39 clases)
+## 3. Estructura final propuesta (39 clases · ejecutadas: 40, ver 10.3)
 
 ```
 com.vitialert.backend
@@ -214,7 +218,7 @@ com.vitialert.backend
     └── GlobalExceptionHandler · ApiErrorResponse · ResourceNotFoundException
 ```
 
-## 4. Endpoints finales (9)
+## 4. Endpoints finales (9 planificados · 10 ejecutados, ver 10.3)
 
 | Método | Ruta | Nota |
 |---|---|---|
@@ -404,12 +408,64 @@ salir como clase propia junto con `DecisionRecord`.
 ## 9. Verificación al terminar
 
 ```bash
-mvn clean verify                 # compilar + 23 tests
+mvn clean verify                 # compilar + 26 tests
 mvn spring-boot:run              # arrancar contra PostgreSQL
 ```
 
-- Swagger en `/swagger-ui.html` con los 9 endpoints
+- Swagger en `/swagger-ui.html` con los 10 endpoints
 - `POST /api/data` con el JSON exacto del ESP32 → `{"abrir_valvula":…,"encender_luz":…}`
 - `POST /api/weather/import` con un CSV del Data Miner
 - `GET /api/dataset/export` y revisar celdas vacías donde faltan lags
 - Con `satellite.enabled=true` apuntando a un puerto cerrado: la telemetría se guarda igual
+
+
+---
+
+## 10. Desvíos entre el plan y la ejecución
+
+El plan se cumplió casi entero. Estos cuatro puntos salieron distinto y conviene tenerlos
+escritos, porque los tres primeros son hallazgos que el plan no podía anticipar.
+
+### 10.1 Las clases de test terminadas en `IT` no se ejecutaban
+
+El primer `mvn clean verify` dio **BUILD SUCCESS con solo 15 de 23 tests**. Surefire ejecuta
+`*Test`, `Test*` y `*Tests`; el sufijo `IT` es de Failsafe, que no está configurado. Las dos
+clases que más importaban —el contrato del ESP32 y el fail-soft de las integraciones— quedaban
+fuera **en silencio**.
+
+Se renombraron a `TelemetryIngestionTest` y `ExternalServicesDownTest`. Es la clase de error
+que no se nota: la build pasa en verde y uno cree que está cubierto.
+
+### 10.2 Un bug de carga perezosa que el refactor reintrodujo
+
+Mientras se reconciliaba con el remoto apareció el commit `6eda399` de Francisco Paredes, que
+arreglaba un `LazyInitializationException`: con `open-in-view: false` y `node` en
+`FetchType.LAZY`, mapear una entidad a DTO en el controller ocurre **después** de que la
+transacción cerró.
+
+El refactor lo reintrodujo al pasar el mapeo a factories estáticos invocados desde el
+controller. Afectaba a `telemetry/latest`, `telemetry` e `irrigation-events`.
+
+Se corrigió con `@EntityGraph(attributePaths = "node")` en las tres consultas que se
+serializan —el mismo enfoque que él había usado— y se agregó `NodeQueriesTest`, **la única
+clase de test sin `@Transactional`**. El resto de la suite mantiene la sesión de Hibernate
+abierta durante todo el test, y por eso no detectaba el problema.
+
+Esto agrega una clase de test y 3 casos sobre lo planificado (7 clases, 26 casos).
+
+### 10.3 El contrato de VitiAI es por coordenadas, no por nodo
+
+La decisión D4 preveía cablear el `SatelliteClient` a un endpoint de sondeo. Al implementarlo
+se confirmó que `viti-alert-ds-api` expone
+`GET /api/v1/satellite/features?lat=&lon=&buffer_km=`: se consulta por **coordenadas**, no por
+`node_id`. El endpoint del backend resuelve la latitud y longitud desde la entidad `Node` antes
+de llamar — que es exactamente para lo que el nodo guarda sus coordenadas, y no para usarlas
+como features del modelo.
+
+Eso deja el total en 10 endpoints y no en los 9 que estimaba el plan.
+
+### 10.4 Maven no estaba instalado en la máquina
+
+El `target/` existente lo había generado el Maven embebido de STS4, que no expone comando de
+consola. Se descargó una copia portátil de Maven 3.9.11 a `.tools/` (ignorada por git) para
+poder compilar sin instalar nada en el sistema.
