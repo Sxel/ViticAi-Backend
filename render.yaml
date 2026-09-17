@@ -41,5 +41,8 @@ services:
         value: "true"
       - key: SATELLITE_BASE_URL
         value: https://viti-alert-ds-api.onrender.com
+      # VitiAI tambien esta en el plan free: hay que bancarle el arranque en frio.
+      - key: SATELLITE_TIMEOUT_MS
+        value: "90000"
       - key: ML_ENABLED
         value: "false"

@@ -1,5 +1,6 @@
 package com.vitialert.backend.service;
 
+import com.vitialert.backend.config.VitiAlertProperties;
 import com.vitialert.backend.domain.IrrigationEvent;
 import com.vitialert.backend.domain.IrrigationEventStatus;
 import com.vitialert.backend.domain.Node;
@@ -13,6 +14,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -30,6 +32,19 @@ import java.util.Optional;
  *
  * <p>Las repeticiones del mismo estado son ruido: el ESP32 informa el estado de la valvula en
  * CADA POST, no solo cuando cambia.</p>
+ *
+ * <p><b>Watchdog.</b> Esa misma garantia de "un solo evento abierto por nodo" es un riesgo: si
+ * el nodo se apaga con la valvula abierta, o si se pierde el POST que informaba el cierre, el
+ * evento queda en {@code OPEN} para siempre y <em>se traga todos los riegos posteriores del
+ * nodo</em>, porque la condicion de apertura exige que no haya ninguno abierto. El resultado
+ * seria un unico evento de semanas de duracion y el historial de riego perdido. Por eso, antes
+ * de decidir cualquier transicion, un evento que lleva abierto mas de
+ * {@code vitialert.irrigation.max-open-hours} se da de baja como
+ * {@link IrrigationEventStatus#ABANDONED}.</p>
+ *
+ * <p>La verificacion es perezosa: corre en la ingesta, que es exactamente cuando hace falta
+ * (el nodo volvio y quiere abrir un evento nuevo). No se agrega una tarea programada porque no
+ * aportaria nada: un evento colgado solo estorba cuando llega la lectura siguiente.</p>
  */
 @Service
 public class IrrigationService {
@@ -37,9 +52,12 @@ public class IrrigationService {
     private static final Logger log = LoggerFactory.getLogger(IrrigationService.class);
 
     private final IrrigationEventRepository irrigationEventRepository;
+    private final Duration maxOpen;
 
-    public IrrigationService(IrrigationEventRepository irrigationEventRepository) {
+    public IrrigationService(IrrigationEventRepository irrigationEventRepository,
+                             VitiAlertProperties properties) {
         this.irrigationEventRepository = irrigationEventRepository;
+        this.maxOpen = Duration.ofHours(properties.irrigation().maxOpenHours());
     }
 
     /** Aplica la lectura recien persistida sobre la maquina de estados del riego. */
@@ -51,12 +69,14 @@ public class IrrigationService {
             return Optional.empty();
         }
 
-        Optional<IrrigationEvent> open = findCurrent(node.getId());
+        Instant now = reading.getTimestampReceived();
+        Optional<IrrigationEvent> open = findCurrent(node.getId())
+                .flatMap(event -> abandonIfStale(node, event, now));
         boolean valveOpen = reading.isValveOpen();
 
         if (valveOpen && open.isEmpty()) {
             IrrigationEvent saved = irrigationEventRepository.save(
-                    new IrrigationEvent(node, reading.getTimestampReceived(), reading.getVolumenTotalL()));
+                    new IrrigationEvent(node, now, reading.getVolumenTotalL()));
             log.info("Riego iniciado nodo={} eventoId={} volumenInicial={} L",
                     node.getExternalId(), saved.getId(), reading.getVolumenTotalL());
             return Optional.of(saved);
@@ -64,7 +84,7 @@ public class IrrigationService {
 
         if (!valveOpen && open.isPresent()) {
             IrrigationEvent event = open.get();
-            event.close(reading.getTimestampReceived(), reading.getVolumenTotalL());
+            event.close(now, reading.getVolumenTotalL());
             IrrigationEvent saved = irrigationEventRepository.save(event);
             if (saved.getEstado() == IrrigationEventStatus.CLOSED_WITH_WARNING) {
                 log.warn("Riego finalizado con advertencia nodo={} eventoId={} detalle={}",
@@ -77,6 +97,28 @@ public class IrrigationService {
             return Optional.of(saved);
         }
 
+        return Optional.empty();
+    }
+
+    /**
+     * Devuelve el evento si sigue vigente, o vacio si lo dio de baja por antiguedad.
+     *
+     * <p>Devolver vacio es lo que permite que la lectura actual abra un evento nuevo: el nodo
+     * esta informando la valvula abierta ahora, asi que el riego que empieza es este, no aquel.</p>
+     */
+    private Optional<IrrigationEvent> abandonIfStale(Node node, IrrigationEvent event, Instant now) {
+        Duration openFor = Duration.between(event.getStartedAt(), now);
+        if (openFor.compareTo(maxOpen) <= 0) {
+            return Optional.of(event);
+        }
+
+        event.abandon("Watchdog: la valvula figuraba abierta desde " + event.getStartedAt()
+                + " (" + openFor.toHours() + " h, maximo " + maxOpen.toHours() + " h) y nunca se "
+                + "observo el cierre. Duracion, volumen aplicado y caudal promedio quedan sin "
+                + "calcular porque se desconoce el instante de cierre.");
+        irrigationEventRepository.save(event);
+        log.warn("Riego dado de baja por watchdog nodo={} eventoId={} abiertoHace={} h",
+                node.getExternalId(), event.getId(), openFor.toHours());
         return Optional.empty();
     }
 

@@ -14,6 +14,7 @@ public record VitiAlertProperties(
         @DefaultValue Node node,
         @DefaultValue Security security,
         @DefaultValue Quality quality,
+        @DefaultValue Irrigation irrigation,
         @DefaultValue Dataset dataset,
         @DefaultValue Satellite satellite,
         @DefaultValue Ml ml
@@ -43,6 +44,18 @@ public record VitiAlertProperties(
     }
 
     /**
+     * Watchdog de la maquina de estados del riego.
+     *
+     * @param maxOpenHours horas que un evento puede permanecer abierto antes de darse de baja.
+     *                     Un riego por goteo real dura horas, no dias; si se supera este limite
+     *                     lo que hubo fue un nodo apagado con la valvula abierta o un POST de
+     *                     cierre perdido, no un riego largo. Sin este limite el evento colgado
+     *                     bloquea el indice unico parcial y absorbe todos los riegos siguientes
+     */
+    public record Irrigation(@DefaultValue("6") int maxOpenHours) {
+    }
+
+    /**
      * @param maxGapSeconds hueco maximo entre lecturas consecutivas que se acepta al integrar
      *                      el tiempo de valvula abierta. Un hueco mayor es nodo offline, no riego
      * @param maxRangeDays  rango maximo consultable de una sola vez
@@ -57,13 +70,19 @@ public record VitiAlertProperties(
      *
      * @param featuresPath ruta del endpoint de features satelitales
      * @param bufferKm     radio de agregacion espacial que se le pide al servicio
+     * @param timeoutMs    VitiAI corre en el plan gratuito de Render, que apaga el servicio a
+     *                     los 15 minutos sin trafico y tarda alrededor de un minuto en volver.
+     *                     Como la sincronizacion es diaria, VitiAI SIEMPRE esta dormido cuando
+     *                     se lo llama: un timeout corto no devuelve un error, devuelve cero
+     *                     observaciones todos los dias y deja las columnas satelitales del
+     *                     dataset vacias para siempre, sin que nada falle a la vista
      */
     public record Satellite(
             @DefaultValue("false") boolean enabled,
             @DefaultValue("http://localhost:8000") String baseUrl,
             @DefaultValue("/api/v1/satellite/features") String featuresPath,
             @DefaultValue("5.0") double bufferKm,
-            @DefaultValue("3000") int timeoutMs) {
+            @DefaultValue("90000") int timeoutMs) {
     }
 
     /**

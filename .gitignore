@@ -15,3 +15,7 @@ target/
 # Scripts auxiliares del refactor
 vitialert-*.bat
 COMMIT_MSG.txt
+
+# Credenciales del firmware del ESP32. El sketch SI se versiona; los valores reales no.
+# Plantilla versionada: secrets.example.h
+secrets.h

@@ -48,7 +48,13 @@ vitialert:
 
   quality:
     # Caudal por debajo del cual se considera "sin flujo" (ruido del caudalimetro de efecto Hall).
+    # El firmware del ESP32 usa este mismo umbral para su corte por falta de caudal.
     flow-noise-threshold-l-min: 0.2
+
+  irrigation:
+    # Horas que un evento de riego puede quedar abierto antes de darse de baja. Un evento
+    # colgado bloquea el indice unico parcial y absorbe todos los riegos posteriores del nodo.
+    max-open-hours: ${IRRIGATION_MAX_OPEN_HOURS:6}
 
   dataset:
     # Hueco maximo entre lecturas que se acepta al integrar el tiempo de valvula abierta.
@@ -61,7 +67,10 @@ vitialert:
     base-url: ${SATELLITE_BASE_URL:http://localhost:8000}
     features-path: /api/v1/satellite/features
     buffer-km: 5.0
-    timeout-ms: 3000
+    # VitiAI corre en Render free: se apaga a los 15 min sin trafico y tarda ~1 min en
+    # despertar. Como la sincronizacion es diaria, SIEMPRE esta dormido cuando se lo llama.
+    # Un timeout corto no da error: da cero capturas todos los dias, en silencio.
+    timeout-ms: ${SATELLITE_TIMEOUT_MS:90000}
 
   # API Python de inferencia. Apagada: la valvula sigue gobernada por decision_riego_local.
   ml:

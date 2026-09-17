@@ -133,4 +133,57 @@ class IrrigationServiceTest {
                 PageRequest.of(0, 10)).getTotalElements()).isEqualTo(1);
         assertThat(irrigationService.findCurrent(node.getId())).isPresent();
     }
+
+    @Test
+    void elWatchdogDaDeBajaUnRiegoQueQuedoAbiertoYDejaEmpezarElSiguiente() {
+        Node node = newNode("evt-6");
+        Instant t0 = Instant.parse("2026-09-01T18:00:00Z");
+
+        // El nodo abre la valvula y despues se apaga: nunca llega el POST que informa el cierre.
+        irrigationService.processReading(node, save(node, t0, true, "40.000"));
+        assertThat(irrigationService.findCurrent(node.getId())).isPresent();
+
+        // Vuelve al dia siguiente, muy pasado el limite de 6 h, informando la valvula abierta.
+        Instant regreso = t0.plus(Duration.ofHours(20));
+        irrigationService.processReading(node, save(node, regreso, true, "0.000"));
+
+        var eventos = irrigationService.findRange(node.getId(), t0.minusSeconds(60),
+                regreso.plusSeconds(60), PageRequest.of(0, 10)).getContent();
+
+        assertThat(eventos).hasSize(2);
+
+        IrrigationEvent nuevo = eventos.get(0);
+        IrrigationEvent colgado = eventos.get(1);
+
+        // El colgado se dio de baja y NO se le invento un cierre.
+        assertThat(colgado.getStartedAt()).isEqualTo(t0);
+        assertThat(colgado.getEstado()).isEqualTo(IrrigationEventStatus.ABANDONED);
+        assertThat(colgado.getEndedAt()).isNull();
+        assertThat(colgado.getDuracionSegundos()).isNull();
+        assertThat(colgado.getVolumenAplicadoL()).isNull();
+        assertThat(colgado.getCaudalPromedioLMin()).isNull();
+        assertThat(colgado.getObservaciones()).contains("Watchdog");
+
+        // Y el riego que empieza ahora si pudo abrirse: es esto lo que el evento colgado bloqueaba.
+        assertThat(nuevo.getStartedAt()).isEqualTo(regreso);
+        assertThat(nuevo.getEstado()).isEqualTo(IrrigationEventStatus.OPEN);
+        assertThat(irrigationService.findCurrent(node.getId()).orElseThrow().getId())
+                .isEqualTo(nuevo.getId());
+    }
+
+    @Test
+    void noDaDeBajaUnRiegoLargoPeroTodaviaDentroDelLimite() {
+        Node node = newNode("evt-7");
+        Instant t0 = Instant.parse("2026-09-01T06:00:00Z");
+
+        irrigationService.processReading(node, save(node, t0, true, "0.000"));
+        // Cinco horas de goteo es un riego real, no un evento colgado.
+        Instant cierre = t0.plus(Duration.ofHours(5));
+        irrigationService.processReading(node, save(node, cierre, false, "1200.000"));
+
+        IrrigationEvent event = firstEvent(node, t0);
+        assertThat(event.getEstado()).isEqualTo(IrrigationEventStatus.CLOSED);
+        assertThat(event.getEndedAt()).isEqualTo(cierre);
+        assertThat(event.getVolumenAplicadoL()).isEqualByComparingTo("1200.000");
+    }
 }

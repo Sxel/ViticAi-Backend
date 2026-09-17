@@ -120,6 +120,26 @@ public class IrrigationEvent {
         }
     }
 
+    /**
+     * Da de baja un evento cuyo cierre nunca se observo.
+     *
+     * <p>A diferencia de {@link #close(Instant, BigDecimal)}, aca NO se calcula duracion,
+     * volumen aplicado ni caudal promedio: no se sabe cuando cerro la valvula, y el invariante
+     * del proyecto es que un dato desconocido queda en null y jamas se reemplaza por un valor
+     * inventado. Inferir el cierre a partir de la ultima lectura seria fabricar el instante
+     * mas importante del evento.</p>
+     *
+     * <p>El efecto lateral buscado es liberar el indice unico parcial
+     * {@code ux_irrigation_open_per_node}: mientras este evento siga en {@code OPEN}, ningun
+     * riego posterior del nodo puede abrir uno nuevo y todos quedarian absorbidos por este.</p>
+     *
+     * @param motivo explicacion que queda registrada en el evento para la trazabilidad
+     */
+    public void abandon(String motivo) {
+        this.estado = IrrigationEventStatus.ABANDONED;
+        this.observaciones = motivo;
+    }
+
     public Long getId() {
         return id;
     }
