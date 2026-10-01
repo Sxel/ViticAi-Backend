@@ -9,7 +9,7 @@ Fecha de actualización: 17 de septiembre de 2026.
 | Backend Java | Desplegado en Render | <https://vitialert-backend.onrender.com> |
 | PostgreSQL | Creado y conectado al backend | `vitialert-db` en Render |
 | API satelital VitiAI | Desplegada en Render | <https://viti-alert-ds-api.onrender.com> |
-| Data Miner meteorológico | Implementado | `data_miner.py` y `web_scrapping.py` |
+| Data Miner meteorológico | Implementado | `data_miner.py` y `weather_collector.py` |
 | Sincronización diaria | Implementada con GitHub Actions | Workflow `VitiAlert data miner` |
 | Sensores IoT | Pendiente de conexión física | ESP32 |
 | Modelo de humedad a 24 h | Pendiente de datos IoT reales | Se mantiene desactivado hasta entrenarlo y validarlo |
@@ -106,7 +106,8 @@ curl -X POST "https://vitialert-backend.onrender.com/api/data" \
 
 ### Data Miner
 
-- `web_scrapping.py` dejó de depender de Google Colab, Google Drive y selectores HTML.
+- `weather_collector.py` reemplazó al antiguo `web_scrapping.py`: dejó de depender de
+  Google Colab, Google Drive y selectores HTML, y consume la API JSON de Open-Meteo.
 - Ahora obtiene meteorología desde la API documentada de Open-Meteo.
 - Produce el CSV exacto que acepta `POST /api/weather/import`.
 - Calcula temperatura, humedad, viento, precipitación, radiación, ET0 y VPD.

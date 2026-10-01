@@ -39,7 +39,7 @@ Cada pieza tiene una sola responsabilidad:
 | Componente | Responsabilidad |
 |---|---|
 | **Backend (este proyecto)** | Integra y almacena. Valida, persiste, reconstruye riegos, construye el dataset |
-| **Data Miner** (Python) | Genera el histórico meteorológico (Open-Meteo ERA5 + scraping) |
+| **Data Miner** (Python) | Genera meteorología histórica y reciente mediante la API de Open-Meteo |
 | **VitiAI** (Python) | Genera las features satelitales (GOES, Sentinel) |
 | **Modelo ML** (Python) | Entrena, evalúa e infiere |
 

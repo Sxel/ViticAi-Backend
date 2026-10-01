@@ -15,7 +15,7 @@ import java.time.LocalDate;
 
 /**
  * Observacion meteorologica diaria proveniente del Data Miner Python
- * (Open-Meteo ERA5-Seamless + scraping complementario).
+ * (API de Open-Meteo: ERA5-Seamless historico y pronostico para dias recientes).
  *
  * <p>Se almacena en una tabla separada de {@link TelemetryReading} porque es una
  * fuente distinta, con otra frecuencia y otro origen de verdad.</p>
@@ -33,7 +33,7 @@ public class WeatherObservation {
     @Column(name = "observation_date", nullable = false)
     private LocalDate observationDate;
 
-    /** Origen del dato, por ejemplo OPEN_METEO_ERA5 o SCRAPING. */
+    /** Origen del dato, por ejemplo OPEN_METEO_ERA5 u OPEN_METEO_FORECAST. */
     @Column(name = "source", nullable = false, length = 60)
     private String source;
 
